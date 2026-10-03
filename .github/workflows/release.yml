@@ -29,6 +29,15 @@ jobs:
       - name: Restore Dependencies
         run: dotnet restore WinInstagram.csproj
 
+      - name: Compute Build Version
+        id: version_step
+        shell: pwsh
+        run: |
+          $commitCount = (git rev-list --count HEAD).Trim()
+          $appVersion = "1.0.$commitCount"
+          Write-Host "Determined application build version: $appVersion"
+          "APP_VERSION=$appVersion" | Out-File -FilePath $env:GITHUB_ENV -Append
+
       - name: Publish Self-Contained Executable
         run: >
           dotnet publish WinInstagram.csproj
@@ -37,7 +46,11 @@ jobs:
           --self-contained true
           -p:PublishSingleFile=true
           -p:IncludeNativeLibrariesForSelfExtract=true
-          -p:Version=1.0.${{ github.run_number }}
+          -p:Version=${{ env.APP_VERSION }}
+          -p:AssemblyVersion=${{ env.APP_VERSION }}.0
+          -p:FileVersion=${{ env.APP_VERSION }}.0
+          -p:InformationalVersion=${{ env.APP_VERSION }}
+          -p:CustomVersionSet=true
           -o ./publish
 
       - name: Create ZIP Archive
@@ -48,8 +61,8 @@ jobs:
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: "v1.0.${{ github.run_number }}"
-          name: "WinInstagram v1.0.${{ github.run_number }}"
+          tag_name: "v${{ env.APP_VERSION }}"
+          name: "WinInstagram v${{ env.APP_VERSION }}"
           draft: false
           prerelease: false
           generate_release_notes: true

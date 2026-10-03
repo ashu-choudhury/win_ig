@@ -15,8 +15,8 @@ namespace WinInstagram.Services;
 public class UpdateInfo
 {
     public bool IsUpdateAvailable { get; set; }
-    public Version CurrentVersion { get; set; } = new(1, 0, 3);
-    public Version LatestVersion { get; set; } = new(1, 0, 3);
+    public Version CurrentVersion { get; set; } = new(1, 0, 0);
+    public Version LatestVersion { get; set; } = new(1, 0, 0);
     public string TagName { get; set; } = string.Empty;
     public string Title { get; set; } = string.Empty;
     public string ReleaseNotes { get; set; } = string.Empty;
@@ -41,12 +41,41 @@ public class UpdateService
         get
         {
             var asm = Assembly.GetEntryAssembly() ?? Assembly.GetExecutingAssembly();
+
+            // 1. Check AssemblyInformationalVersion (e.g. 1.0.8 or 1.0.8+hash)
+            var infoVer = asm.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion;
+            if (!string.IsNullOrWhiteSpace(infoVer))
+            {
+                var clean = infoVer.Split('+')[0].Trim().TrimStart('v', 'V');
+                if (Version.TryParse(clean, out var parsedInfo))
+                {
+                    return new Version(parsedInfo.Major, parsedInfo.Minor, Math.Max(0, parsedInfo.Build));
+                }
+            }
+
+            // 2. Check FileVersion of executing binary
+            try
+            {
+                var processPath = Environment.ProcessPath;
+                if (!string.IsNullOrEmpty(processPath) && File.Exists(processPath))
+                {
+                    var fvi = FileVersionInfo.GetVersionInfo(processPath);
+                    if (!string.IsNullOrWhiteSpace(fvi.FileVersion) && Version.TryParse(fvi.FileVersion, out var parsedFile))
+                    {
+                        return new Version(parsedFile.Major, parsedFile.Minor, Math.Max(0, parsedFile.Build));
+                    }
+                }
+            }
+            catch { }
+
+            // 3. Check Assembly Name Version
             var ver = asm.GetName().Version;
             if (ver != null && ver != new Version(0, 0, 0, 0))
             {
                 return new Version(ver.Major, ver.Minor, Math.Max(0, ver.Build));
             }
-            return new Version(1, 0, 3);
+
+            return new Version(1, 0, 0);
         }
     }
 

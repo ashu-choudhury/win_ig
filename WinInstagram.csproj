@@ -6,10 +6,24 @@
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <UseWPF>true</UseWPF>
-    <Version>1.0.3</Version>
-    <AssemblyVersion>1.0.3.0</AssemblyVersion>
-    <FileVersion>1.0.3.0</FileVersion>
+    <!-- Version prefix; patch version automatically increments with git commits or CI build number -->
+    <VersionPrefix>1.0</VersionPrefix>
   </PropertyGroup>
+
+  <!-- Automatically calculate version from Git commit count if not explicitly supplied -->
+  <Target Name="SetGitVersion" BeforeTargets="BeforeBuild;GetAssemblyVersion;GenerateAssemblyInfo" Condition="'$(CustomVersionSet)' != 'true'">
+    <Exec Command="git rev-list --count HEAD" ConsoleToMSBuild="true" StandardOutputImportance="low" IgnoreExitCode="true">
+      <Output TaskParameter="ConsoleOutput" PropertyName="GitCommitCount" />
+    </Exec>
+    <PropertyGroup>
+      <GitCommitCount Condition="'$(GitCommitCount)' == ''">0</GitCommitCount>
+      <Version>$(VersionPrefix).$(GitCommitCount.Trim())</Version>
+      <AssemblyVersion>$(VersionPrefix).$(GitCommitCount.Trim()).0</AssemblyVersion>
+      <FileVersion>$(VersionPrefix).$(GitCommitCount.Trim()).0</FileVersion>
+      <InformationalVersion>$(VersionPrefix).$(GitCommitCount.Trim())</InformationalVersion>
+    </PropertyGroup>
+    <Message Importance="high" Text="Auto-versioning set Version: $(Version), AssemblyVersion: $(AssemblyVersion)" />
+  </Target>
 
   <ItemGroup>
     <PackageReference Include="Microsoft.Web.WebView2" Version="1.0.4258.31" />

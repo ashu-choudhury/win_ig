@@ -161,7 +161,7 @@
                     <DockPanel Margin="0,0,0,10">
                         <TextBlock Text="🚀 WinInstagram Update Available" Foreground="#FFFFFF" FontSize="18" FontWeight="Bold" VerticalAlignment="Center" />
                         <Border Background="#1F3A34" CornerRadius="10" Padding="8,2" HorizontalAlignment="Right">
-                            <TextBlock x:Name="TxtUpdateTag" Text="v1.0.4" Foreground="#4EC9B0" FontSize="12" FontWeight="Bold" />
+                            <TextBlock x:Name="TxtUpdateTag" Text="" Foreground="#4EC9B0" FontSize="12" FontWeight="Bold" />
                         </Border>
                     </DockPanel>
 
