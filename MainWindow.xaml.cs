@@ -16,6 +16,8 @@ public partial class MainWindow : Window
     private ReelItem? _activeReel;
     private bool _isPlaying = true;
     private readonly ObservableCollection<InstagramComment> _activeComments = new();
+    private UpdateInfo? _pendingUpdate;
+    private bool _isDownloadingUpdate = false;
 
     public MainWindow()
     {
@@ -26,6 +28,16 @@ public partial class MainWindow : Window
     {
         AccessibilityHelper.RegisterAnnouncementTarget(TxtFooterStatus);
         ListComments.ItemsSource = _activeComments;
+
+        UpdateService.Instance.UpdateAvailable += OnUpdateAvailable;
+        UpdateService.Instance.UpdateCheckStatusUpdated += OnUpdateCheckStatusUpdated;
+
+        // Background update check after app startup
+        _ = Task.Run(async () =>
+        {
+            await Task.Delay(3000);
+            await UpdateService.Instance.CheckForUpdatesAsync(isManual: false);
+        });
 
         ViewLogin.LoginSucceeded += OnLoginSucceeded;
         InstagramBridgeService.Instance.LoginStatusChanged += OnLoginStatusChanged;
@@ -360,6 +372,23 @@ public partial class MainWindow : Window
 
     private void Window_KeyDown(object sender, KeyEventArgs e)
     {
+        // 0. If update dialog is visible, handle Enter and Escape
+        if (UpdateDialog.Visibility == Visibility.Visible)
+        {
+            if (e.Key == Key.Escape)
+            {
+                DismissUpdate();
+                e.Handled = true;
+                return;
+            }
+            if (e.Key == Key.Enter && !_isDownloadingUpdate)
+            {
+                StartInstallUpdate();
+                e.Handled = true;
+                return;
+            }
+        }
+
         // 1. If comments drawer is visible, Escape key closes it
         if (e.Key == Key.Escape && CommentsDrawer.Visibility == Visibility.Visible)
         {
@@ -368,12 +397,17 @@ public partial class MainWindow : Window
             return;
         }
 
-        // 2. Global Tab Navigation hotkeys (Ctrl+1, Ctrl+2, Ctrl+3, Ctrl+L)
+        // 2. Global Tab Navigation & Update hotkeys (Ctrl+1, Ctrl+2, Ctrl+3, Ctrl+L, Ctrl+U)
         var isCtrl = (Keyboard.Modifiers & ModifierKeys.Control) == ModifierKeys.Control;
         if (isCtrl)
         {
             switch (e.Key)
             {
+                case Key.U:
+                    CheckForUpdatesManual();
+                    e.Handled = true;
+                    return;
+
                 case Key.D1:
                 case Key.NumPad1:
                     if (NavHome.IsEnabled) NavHome.IsChecked = true;
@@ -448,4 +482,112 @@ public partial class MainWindow : Window
             }
         }
     }
-}
+
+    private void BtnCheckUpdate_Click(object sender, RoutedEventArgs e) => CheckForUpdatesManual();
+
+    private void CheckForUpdatesManual()
+    {
+        AccessibilityHelper.Announce("Checking for updates...");
+        TxtFooterStatus.Text = "Checking GitHub for updates...";
+        _ = Task.Run(() => UpdateService.Instance.CheckForUpdatesAsync(isManual: true));
+    }
+
+    private void OnUpdateAvailable(UpdateInfo info)
+    {
+        Dispatcher.Invoke(() =>
+        {
+            _pendingUpdate = info;
+            TxtUpdateTag.Text = info.TagName;
+            TxtUpdateVersions.Text = $"Current: v{info.CurrentVersion} → Latest: {info.TagName}";
+            TxtUpdateNotes.Text = string.IsNullOrWhiteSpace(info.ReleaseNotes) 
+                ? "New bug fixes and performance improvements." 
+                : info.ReleaseNotes;
+            UpdateProgressBar.Value = 0;
+            UpdateProgressPanel.Visibility = Visibility.Collapsed;
+            UpdateButtonsPanel.IsEnabled = true;
+            UpdateDialog.Visibility = Visibility.Visible;
+            BtnInstallUpdate.Focus();
+
+            AccessibilityHelper.Announce($"Update available: {info.TagName}. Press Enter to download and install, or Escape to dismiss.");
+        });
+    }
+
+    private void OnUpdateCheckStatusUpdated(string message)
+    {
+        Dispatcher.Invoke(() =>
+        {
+            if (!string.IsNullOrWhiteSpace(message))
+            {
+                TxtFooterStatus.Text = message;
+                AccessibilityHelper.Announce(message);
+            }
+        });
+    }
+
+    private void BtnInstallUpdate_Click(object sender, RoutedEventArgs e) => StartInstallUpdate();
+
+    private void StartInstallUpdate()
+    {
+        if (_pendingUpdate == null || _isDownloadingUpdate) return;
+        _isDownloadingUpdate = true;
+        UpdateButtonsPanel.IsEnabled = false;
+        UpdateProgressPanel.Visibility = Visibility.Visible;
+        UpdateProgressBar.Value = 0;
+        TxtUpdateProgress.Text = "Starting download...";
+        AccessibilityHelper.Announce("Starting update download...");
+
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                var progress = new Progress<double>(pct =>
+                {
+                    Dispatcher.Invoke(() =>
+                    {
+                        UpdateProgressBar.Value = pct;
+                        TxtUpdateProgress.Text = $"Downloading update: {(int)pct}%...";
+                        if ((int)pct % 25 == 0 && (int)pct > 0 && (int)pct < 100)
+                        {
+                            AccessibilityHelper.Announce($"Download {(int)pct} percent");
+                        }
+                    });
+                });
+
+                var newExe = await UpdateService.Instance.DownloadUpdateAsync(_pendingUpdate, progress);
+
+                Dispatcher.Invoke(() =>
+                {
+                    TxtUpdateProgress.Text = "Download complete. Relaunching WinInstagram...";
+                    AccessibilityHelper.Announce("Download complete. Relaunching WinInstagram now.");
+                });
+
+                await Task.Delay(800);
+                UpdateService.Instance.ApplyUpdateAndRelaunch(newExe);
+            }
+            catch (Exception ex)
+            {
+                AppLogger.Error("UPDATER", "Failed to download/apply update", ex);
+                Dispatcher.Invoke(() =>
+                {
+                    _isDownloadingUpdate = false;
+                    UpdateButtonsPanel.IsEnabled = true;
+                    UpdateProgressPanel.Visibility = Visibility.Collapsed;
+                    TxtFooterStatus.Text = $"Update failed: {ex.Message}";
+                    AccessibilityHelper.Announce($"Update failed: {ex.Message}");
+                });
+            }
+        });
+    }
+
+    private void BtnDismissUpdate_Click(object sender, RoutedEventArgs e) => DismissUpdate();
+
+    private void DismissUpdate()
+    {
+        UpdateDialog.Visibility = Visibility.Collapsed;
+        _pendingUpdate = null;
+        _isDownloadingUpdate = false;
+        if (NavReels.IsChecked == true) BtnNextReel.Focus();
+        else NavHome.Focus();
+        AccessibilityHelper.Announce("Update dismissed.");
+    }
+}

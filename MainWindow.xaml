@@ -59,8 +59,13 @@
                                  AutomationProperties.Name="Account and login tab. Press Ctrl+L." />
                 </StackPanel>
 
-                <!-- Status Badge -->
+                <!-- Status Badge & Update Check -->
                 <StackPanel Orientation="Horizontal" DockPanel.Dock="Right" VerticalAlignment="Center">
+                    <Button x:Name="BtnCheckUpdate" Content="🔄 Updates (Ctrl+U)" 
+                            Click="BtnCheckUpdate_Click" TabIndex="5"
+                            Background="#2A2A2A" Foreground="#CCCCCC" FontWeight="SemiBold"
+                            Padding="10,5" Margin="0,0,10,0"
+                            AutomationProperties.Name="Check for updates. Press Ctrl+U." />
                     <Border x:Name="BadgeSession" Background="#333333" CornerRadius="12" Padding="12,4">
                         <TextBlock x:Name="TxtSessionBadge" Text="Checking session..." Foreground="#AAAAAA" FontSize="12" FontWeight="SemiBold" />
                     </Border>
@@ -146,6 +151,52 @@
                     </DockPanel>
                 </Grid>
             </Border>
+
+            <!-- Accessible In-App Auto-Update Modal Dialog -->
+            <Border x:Name="UpdateDialog" HorizontalAlignment="Center" VerticalAlignment="Center"
+                    Width="520" Background="#1E1E1E" BorderBrush="#007ACC" BorderThickness="2" CornerRadius="12"
+                    Padding="24" Visibility="Collapsed" Panel.ZIndex="1000"
+                    KeyboardNavigation.TabNavigation="Cycle">
+                <StackPanel>
+                    <DockPanel Margin="0,0,0,10">
+                        <TextBlock Text="🚀 WinInstagram Update Available" Foreground="#FFFFFF" FontSize="18" FontWeight="Bold" VerticalAlignment="Center" />
+                        <Border Background="#1F3A34" CornerRadius="10" Padding="8,2" HorizontalAlignment="Right">
+                            <TextBlock x:Name="TxtUpdateTag" Text="v1.0.4" Foreground="#4EC9B0" FontSize="12" FontWeight="Bold" />
+                        </Border>
+                    </DockPanel>
+
+                    <TextBlock x:Name="TxtUpdateVersions" Text="A newer version is ready to install!" 
+                               Foreground="#4EC9B0" FontSize="14" FontWeight="SemiBold" Margin="0,0,0,10" />
+
+                    <Border Background="#141414" BorderBrush="#2D2D30" BorderThickness="1" CornerRadius="8" Padding="12" Margin="0,0,0,16" MaxHeight="160">
+                        <ScrollViewer VerticalScrollBarVisibility="Auto">
+                            <TextBlock x:Name="TxtUpdateNotes" Text="Release notes" 
+                                       Foreground="#D0D0D0" TextWrapping="Wrap" FontSize="13" FontFamily="Segoe UI" />
+                        </ScrollViewer>
+                    </Border>
+
+                    <!-- Progress bar shown during download -->
+                    <StackPanel x:Name="UpdateProgressPanel" Visibility="Collapsed" Margin="0,0,0,14">
+                        <ProgressBar x:Name="UpdateProgressBar" Height="10" Minimum="0" Maximum="100" Value="0" 
+                                     Foreground="#007ACC" Background="#333333" Margin="0,0,0,6" />
+                        <TextBlock x:Name="TxtUpdateProgress" Text="Downloading update: 0%..." 
+                                   Foreground="#AAAAAA" FontSize="12" HorizontalAlignment="Center"
+                                   AutomationProperties.LiveSetting="Polite" />
+                    </StackPanel>
+
+                    <!-- Action buttons -->
+                    <UniformGrid x:Name="UpdateButtonsPanel" Columns="2" Margin="0,4,0,0">
+                        <Button x:Name="BtnInstallUpdate" Content="⬇️ Download &amp; Install" 
+                                Click="BtnInstallUpdate_Click" TabIndex="30"
+                                Background="#007ACC" Foreground="White" FontWeight="Bold" Padding="12,10" Margin="0,0,6,0"
+                                AutomationProperties.Name="Download and install update now" />
+                        <Button x:Name="BtnDismissUpdate" Content="✖ Later (Esc)" 
+                                Click="BtnDismissUpdate_Click" TabIndex="31"
+                                Background="#2A2A2A" Foreground="White" Padding="12,10" Margin="6,0,0,0"
+                                AutomationProperties.Name="Dismiss update for now. Press Escape." />
+                    </UniformGrid>
+                </StackPanel>
+            </Border>
         </Grid>
 
         <!-- Bottom Accessible Status Bar & Controls -->
@@ -183,7 +234,7 @@
                 </StackPanel>
 
                 <!-- Shortcut Legend -->
-                <TextBlock Text="Ctrl+1 (Home) | Ctrl+2 (Reels) | Ctrl+3 (Messages) | Ctrl+L (Account)" 
+                <TextBlock Text="Ctrl+1 (Home) | Ctrl+2 (Reels) | Ctrl+3 (Messages) | Ctrl+L (Account) | Ctrl+U (Updates)" 
                            Foreground="#666666" FontSize="11" VerticalAlignment="Center" DockPanel.Dock="Right" />
 
                 <!-- Live Status Region -->

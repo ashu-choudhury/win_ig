@@ -37,6 +37,7 @@ jobs:
           --self-contained true
           -p:PublishSingleFile=true
           -p:IncludeNativeLibrariesForSelfExtract=true
+          -p:Version=1.0.${{ github.run_number }}
           -o ./publish
 
       - name: Create ZIP Archive
@@ -80,5 +81,6 @@ jobs:
             - **Escape**: Close Comments Drawer
           files: |
             WinInstagram-windows-x64.zip
+            ./publish/WinInstagram.exe
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
