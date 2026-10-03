@@ -1,6 +1,7 @@
 using System.Collections.ObjectModel;
 using System.ComponentModel;
 using System.Runtime.CompilerServices;
+using System.Windows;
 
 namespace WinInstagram.Models;
 
@@ -117,13 +118,88 @@ public class ReelItem : INotifyPropertyChanged
         PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(name));
 }
 
-public class InstagramComment
+public class InstagramComment : INotifyPropertyChanged
 {
-    public string Id { get; set; } = string.Empty;
-    public string Username { get; set; } = string.Empty;
-    public string Text { get; set; } = string.Empty;
-    public string CreatedAt { get; set; } = string.Empty;
-    public long LikesCount { get; set; }
+    private bool _isLiked;
+    private long _likesCount;
+    private string _text = string.Empty;
 
-    public string AccessibleText => $"{Username}: {Text}. {LikesCount} likes. Posted {CreatedAt}";
+    public string Id { get; set; } = string.Empty;
+    public int Index { get; set; }
+    public string Username { get; set; } = string.Empty;
+    public string CreatedAt { get; set; } = string.Empty;
+
+    public string Text
+    {
+        get => _text;
+        set
+        {
+            if (_text != value)
+            {
+                _text = value;
+                OnPropertyChanged();
+                OnPropertyChanged(nameof(AccessibleText));
+            }
+        }
+    }
+
+    public long LikesCount
+    {
+        get => _likesCount;
+        set
+        {
+            if (_likesCount != value)
+            {
+                _likesCount = value;
+                OnPropertyChanged();
+                OnPropertyChanged(nameof(FormattedLikes));
+                OnPropertyChanged(nameof(AccessibleText));
+            }
+        }
+    }
+
+    public bool IsLiked
+    {
+        get => _isLiked;
+        set
+        {
+            if (_isLiked != value)
+            {
+                _isLiked = value;
+                OnPropertyChanged();
+                OnPropertyChanged(nameof(LikeButtonText));
+                OnPropertyChanged(nameof(AccessibleText));
+            }
+        }
+    }
+
+    public string LikeButtonText => IsLiked ? "❤️ Liked" : "🤍 Like";
+
+    public string FormattedLikes
+    {
+        get
+        {
+            if (LikesCount <= 0) return "";
+            if (LikesCount >= 1_000_000) return $"{(LikesCount / 1_000_000.0):0.#}M";
+            if (LikesCount >= 1_000) return $"{(LikesCount / 1_000.0):0.#}K";
+            return LikesCount.ToString();
+        }
+    }
+
+    public Visibility LikesVisibility => LikesCount > 0 ? Visibility.Visible : Visibility.Collapsed;
+
+    public string AccessibleText
+    {
+        get
+        {
+            var likePart = LikesCount > 0 ? $"{FormattedLikes} likes. " : "";
+            var statusPart = IsLiked ? "Liked by you. " : "";
+            var datePart = !string.IsNullOrWhiteSpace(CreatedAt) ? $"Posted {CreatedAt}. " : "";
+            return $"Comment by @{Username}: {Text}. {likePart}{statusPart}{datePart}Press Enter to toggle like.";
+        }
+    }
+
+    public event PropertyChangedEventHandler? PropertyChanged;
+    protected void OnPropertyChanged([CallerMemberName] string? name = null) =>
+        PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(name));
 }

@@ -1,7 +1,10 @@
+using System.Collections.ObjectModel;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Controls.Primitives;
 using System.Windows.Input;
 using System.Windows.Media;
+using WinInstagram.Models;
 using WinInstagram.Services;
 
 namespace WinInstagram;
@@ -10,6 +13,8 @@ public partial class MainWindow : Window
 {
     private bool _hasTransitionedToHome = false;
     private string _currentTab = "";
+    private ReelItem? _activeReel;
+    private readonly ObservableCollection<InstagramComment> _activeComments = new();
 
     public MainWindow()
     {
@@ -19,9 +24,11 @@ public partial class MainWindow : Window
     private void Window_Loaded(object sender, RoutedEventArgs e)
     {
         AccessibilityHelper.RegisterAnnouncementTarget(TxtFooterStatus);
+        ListComments.ItemsSource = _activeComments;
 
         ViewLogin.LoginSucceeded += OnLoginSucceeded;
         InstagramBridgeService.Instance.LoginStatusChanged += OnLoginStatusChanged;
+        InstagramBridgeService.Instance.CommentsReceived += OnCommentsReceived;
         InstagramBridgeService.Instance.StatusMessageUpdated += (msg) =>
         {
             Dispatcher.Invoke(() => TxtFooterStatus.Text = msg);
@@ -30,7 +37,13 @@ public partial class MainWindow : Window
         {
             Dispatcher.Invoke(() =>
             {
-                var likesInfo = !string.IsNullOrWhiteSpace(reel.FormattedLikes) ? $" • ❤️ {reel.FormattedLikes}" : "";
+                if (_activeReel?.Id != reel.Id)
+                {
+                    _activeComments.Clear();
+                }
+                _activeReel = reel;
+
+                var likesInfo = !string.IsNullOrWhiteSpace(reel.FormattedLikes) ? $" • ❤️ {reel.FormattedLikes} likes" : "";
                 var likeBtnLabel = reel.IsLiked
                     ? (!string.IsNullOrWhiteSpace(reel.FormattedLikes) ? $"❤️ Liked ({reel.FormattedLikes})" : "❤️ Liked (L)")
                     : (!string.IsNullOrWhiteSpace(reel.FormattedLikes) ? $"🤍 Like ({reel.FormattedLikes})" : "🤍 Like (L)");
@@ -43,8 +56,8 @@ public partial class MainWindow : Window
                 BtnLikeReel.Content = likeBtnLabel;
 
                 var likeAnnounce = reel.IsLiked
-                    ? $"Liked. {reel.FormattedLikes} likes. Press L to unlike."
-                    : $"Like. {reel.FormattedLikes} likes. Press L to like.";
+                    ? $"Liked reel by {reel.Username}. {reel.FormattedLikes} likes. Press L to unlike."
+                    : $"Like reel by {reel.Username}. {reel.FormattedLikes} likes. Press L to like.";
                 System.Windows.Automation.AutomationProperties.SetName(BtnLikeReel, likeAnnounce);
 
                 var announceMsg = $"Reel by @{reel.Username}. {(!string.IsNullOrWhiteSpace(reel.FormattedLikes) ? reel.FormattedLikes + " likes. " : "")}{reel.Caption}";
@@ -172,12 +185,142 @@ public partial class MainWindow : Window
         }
     }
 
+    private void OnCommentsReceived(List<InstagramComment> comments)
+    {
+        Dispatcher.Invoke(() =>
+        {
+            if (comments == null || comments.Count == 0) return;
+
+            // Merge comments
+            foreach (var c in comments)
+            {
+                var existing = _activeComments.FirstOrDefault(x => (!string.IsNullOrEmpty(x.Id) && x.Id == c.Id) || (x.Username == c.Username && x.Text == c.Text));
+                if (existing == null)
+                {
+                    _activeComments.Add(c);
+                }
+                else
+                {
+                    existing.LikesCount = c.LikesCount;
+                    existing.IsLiked = c.IsLiked;
+                }
+            }
+
+            TxtCommentsHeader.Text = $"💬 Comments ({_activeComments.Count})";
+            if (CommentsDrawer.Visibility == Visibility.Visible)
+            {
+                AccessibilityHelper.Announce($"{_activeComments.Count} comments available. Use Up and Down arrow keys to explore comments.");
+            }
+        });
+    }
+
     private void BtnPrevReel_Click(object sender, RoutedEventArgs e) => _ = InstagramBridgeService.Instance.PreviousReelAsync();
     private void BtnPlayPauseReel_Click(object sender, RoutedEventArgs e) => _ = InstagramBridgeService.Instance.TogglePlayAsync();
     private void BtnNextReel_Click(object sender, RoutedEventArgs e) => _ = InstagramBridgeService.Instance.NextReelAsync();
     private void BtnMuteReel_Click(object sender, RoutedEventArgs e) => _ = InstagramBridgeService.Instance.ToggleMuteAsync();
     private void BtnLikeReel_Click(object sender, RoutedEventArgs e) => _ = InstagramBridgeService.Instance.ToggleLikeAsync();
-    private void BtnCommentsReel_Click(object sender, RoutedEventArgs e) => _ = InstagramBridgeService.Instance.ToggleCommentsAsync();
+    private void BtnCommentsReel_Click(object sender, RoutedEventArgs e) => ToggleCommentsDrawer();
+
+    private void ToggleCommentsDrawer()
+    {
+        if (CommentsDrawer.Visibility == Visibility.Visible)
+        {
+            CloseCommentsDrawer();
+        }
+        else
+        {
+            OpenCommentsDrawer();
+        }
+    }
+
+    private void OpenCommentsDrawer()
+    {
+        CommentsDrawer.Visibility = Visibility.Visible;
+        TxtCommentsHeader.Text = _activeReel != null && !string.IsNullOrWhiteSpace(_activeReel.Username)
+            ? $"💬 Comments (@{_activeReel.Username})"
+            : "💬 Comments";
+
+        _ = InstagramBridgeService.Instance.ToggleCommentsAsync();
+        _ = InstagramBridgeService.Instance.ScrapeCommentsAsync();
+
+        TxtDrawerComment.Focus();
+        AccessibilityHelper.Announce($"Comments opened for @{_activeReel?.Username ?? "reel"}. Press Tab to explore comments list, or type a comment and press Enter. Press Escape to close comments.");
+    }
+
+    private void CloseCommentsDrawer()
+    {
+        CommentsDrawer.Visibility = Visibility.Collapsed;
+        _ = InstagramBridgeService.Instance.CloseCommentsAsync();
+        BtnCommentsReel.Focus();
+        AccessibilityHelper.Announce("Comments closed. Returned to reel playback.");
+    }
+
+    private void BtnCloseComments_Click(object sender, RoutedEventArgs e) => CloseCommentsDrawer();
+
+    private void BtnLikeCommentItem_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is FrameworkElement fe && fe.Tag is InstagramComment comment)
+        {
+            ToggleCommentLike(comment);
+        }
+    }
+
+    private void ListComments_KeyDown(object sender, KeyEventArgs e)
+    {
+        if (e.Key == Key.Enter || e.Key == Key.Space)
+        {
+            if (ListComments.SelectedItem is InstagramComment comment)
+            {
+                ToggleCommentLike(comment);
+                e.Handled = true;
+            }
+        }
+    }
+
+    private void ToggleCommentLike(InstagramComment comment)
+    {
+        _ = InstagramBridgeService.Instance.LikeCommentAsync(comment.Index, comment.Username, comment.Text);
+        comment.IsLiked = !comment.IsLiked;
+        if (comment.IsLiked) comment.LikesCount++;
+        else if (comment.LikesCount > 0) comment.LikesCount--;
+
+        var msg = comment.IsLiked
+            ? $"Liked comment by @{comment.Username}."
+            : $"Unliked comment by @{comment.Username}.";
+        AccessibilityHelper.Announce(msg);
+    }
+
+    private void TxtDrawerComment_KeyDown(object sender, KeyEventArgs e)
+    {
+        if (e.Key == Key.Enter)
+        {
+            SubmitDrawerComment();
+            e.Handled = true;
+        }
+    }
+
+    private void BtnDrawerPostComment_Click(object sender, RoutedEventArgs e) => SubmitDrawerComment();
+
+    private void SubmitDrawerComment()
+    {
+        var text = TxtDrawerComment.Text?.Trim();
+        if (string.IsNullOrWhiteSpace(text)) return;
+        _ = InstagramBridgeService.Instance.PostCommentAsync(text);
+
+        var newComment = new InstagramComment
+        {
+            Id = Guid.NewGuid().ToString("N"),
+            Index = _activeComments.Count,
+            Username = "You",
+            Text = text,
+            CreatedAt = "Just now",
+            LikesCount = 0,
+            IsLiked = false
+        };
+        _activeComments.Insert(0, newComment);
+        TxtDrawerComment.Clear();
+        AccessibilityHelper.Announce($"Comment posted: {text}");
+    }
 
     private void TxtQuickComment_KeyDown(object sender, KeyEventArgs e)
     {
@@ -204,8 +347,16 @@ public partial class MainWindow : Window
 
     private void Window_KeyDown(object sender, KeyEventArgs e)
     {
-        var isCtrl = (Keyboard.Modifiers & ModifierKeys.Control) == ModifierKeys.Control;
+        // 1. If comments drawer is visible, Escape key closes it
+        if (e.Key == Key.Escape && CommentsDrawer.Visibility == Visibility.Visible)
+        {
+            CloseCommentsDrawer();
+            e.Handled = true;
+            return;
+        }
 
+        // 2. Global Tab Navigation hotkeys (Ctrl+1, Ctrl+2, Ctrl+3, Ctrl+L)
+        var isCtrl = (Keyboard.Modifiers & ModifierKeys.Control) == ModifierKeys.Control;
         if (isCtrl)
         {
             switch (e.Key)
@@ -237,7 +388,13 @@ public partial class MainWindow : Window
             }
         }
 
-        // Global hotkeys when on Reels tab
+        // 3. If user is currently typing in any text box, DO NOT capture single-character hotkeys
+        if (Keyboard.FocusedElement is TextBoxBase)
+        {
+            return;
+        }
+
+        // 4. Hotkeys when on Reels tab
         if (NavReels.IsChecked == true)
         {
             switch (e.Key)
@@ -272,7 +429,7 @@ public partial class MainWindow : Window
                     break;
 
                 case Key.C:
-                    _ = InstagramBridgeService.Instance.ToggleCommentsAsync();
+                    ToggleCommentsDrawer();
                     e.Handled = true;
                     break;
             }

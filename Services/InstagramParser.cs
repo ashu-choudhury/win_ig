@@ -161,19 +161,66 @@ public static class InstagramParser
     {
         if (element.ValueKind == JsonValueKind.Object)
         {
-            if (element.TryGetProperty("text", out var textProp) && textProp.ValueKind == JsonValueKind.String &&
-                element.TryGetProperty("user", out var uObj) && uObj.ValueKind == JsonValueKind.Object)
+            if (element.TryGetProperty("text", out var textProp) && textProp.ValueKind == JsonValueKind.String)
             {
-                var c = new InstagramComment
+                JsonElement userObj = default;
+                bool hasUser = (element.TryGetProperty("user", out userObj) && userObj.ValueKind == JsonValueKind.Object) ||
+                               (element.TryGetProperty("owner", out userObj) && userObj.ValueKind == JsonValueKind.Object);
+
+                if (hasUser)
                 {
-                    Id = element.TryGetProperty("id", out var id) ? (id.ValueKind == JsonValueKind.String ? id.GetString() ?? "" : id.ToString()) : "",
-                    Text = textProp.GetString() ?? "",
-                    Username = uObj.TryGetProperty("username", out var u) ? u.GetString() ?? "user" : "user",
-                    LikesCount = element.TryGetProperty("comment_like_count", out var lk) ? (lk.ValueKind == JsonValueKind.Number ? lk.GetInt64() : 0) : 0
-                };
-                if (!string.IsNullOrWhiteSpace(c.Text) && !comments.Any(x => x.Id == c.Id && !string.IsNullOrEmpty(c.Id)))
-                {
-                    comments.Add(c);
+                    string idStr = "";
+                    if (element.TryGetProperty("id", out var idProp))
+                        idStr = idProp.ValueKind == JsonValueKind.String ? idProp.GetString() ?? "" : idProp.ToString();
+                    else if (element.TryGetProperty("pk", out var pkProp))
+                        idStr = pkProp.ToString();
+
+                    string username = "user";
+                    if (userObj.TryGetProperty("username", out var u))
+                        username = u.GetString() ?? "user";
+
+                    long likesCount = 0;
+                    if (element.TryGetProperty("comment_like_count", out var lk) && lk.ValueKind == JsonValueKind.Number)
+                        likesCount = lk.GetInt64();
+                    else if (element.TryGetProperty("edge_liked_by", out var elb) && elb.ValueKind == JsonValueKind.Object &&
+                             elb.TryGetProperty("count", out var elbCount) && elbCount.ValueKind == JsonValueKind.Number)
+                        likesCount = elbCount.GetInt64();
+
+                    bool isLiked = false;
+                    if (element.TryGetProperty("has_liked_comment", out var hlc) && hlc.ValueKind == JsonValueKind.True)
+                        isLiked = true;
+                    else if (element.TryGetProperty("viewer_has_liked", out var vhl) && vhl.ValueKind == JsonValueKind.True)
+                        isLiked = true;
+
+                    string createdAtStr = "";
+                    if (element.TryGetProperty("created_at", out var caProp))
+                    {
+                        if (caProp.ValueKind == JsonValueKind.Number)
+                        {
+                            var dt = DateTimeOffset.FromUnixTimeSeconds(caProp.GetInt64()).ToLocalTime();
+                            createdAtStr = dt.ToString("g");
+                        }
+                        else if (caProp.ValueKind == JsonValueKind.String)
+                        {
+                            createdAtStr = caProp.GetString() ?? "";
+                        }
+                    }
+
+                    var c = new InstagramComment
+                    {
+                        Id = string.IsNullOrWhiteSpace(idStr) ? Guid.NewGuid().ToString("N") : idStr,
+                        Index = comments.Count,
+                        Text = textProp.GetString() ?? "",
+                        Username = username,
+                        LikesCount = likesCount,
+                        IsLiked = isLiked,
+                        CreatedAt = createdAtStr
+                    };
+
+                    if (!string.IsNullOrWhiteSpace(c.Text) && !comments.Any(x => x.Id == c.Id))
+                    {
+                        comments.Add(c);
+                    }
                 }
             }
 

@@ -68,11 +68,84 @@
             </DockPanel>
         </Border>
 
-        <!-- Main Content Area: Full Screen WebView2 Engine -->
+        <!-- Main Content Area: Full Screen WebView2 Engine + Comments Drawer Overlay -->
         <Grid Grid.Row="1" Focusable="False" KeyboardNavigation.IsTabStop="False" KeyboardNavigation.TabNavigation="None">
             <!-- Full Screen Instagram WebView (Visible, Natural 60fps playback) -->
             <views:LoginView x:Name="ViewLogin" Visibility="Visible" GotFocus="ViewLogin_GotFocus" 
                              Focusable="False" KeyboardNavigation.IsTabStop="False" KeyboardNavigation.TabNavigation="None" TabIndex="99" />
+
+            <!-- Accessible Comments Drawer Overlay (Right Side) -->
+            <Border x:Name="CommentsDrawer" HorizontalAlignment="Right" Width="420"
+                    Background="#1E1E1E" BorderBrush="#333333" BorderThickness="1,0,0,0"
+                    Visibility="Collapsed" KeyboardNavigation.TabNavigation="Cycle">
+                <Grid Margin="16,14">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="*" />
+                        <RowDefinition Height="Auto" />
+                    </Grid.RowDefinitions>
+
+                    <!-- Drawer Header -->
+                    <DockPanel Grid.Row="0" Margin="0,0,0,10">
+                        <Button x:Name="BtnCloseComments" Content="✖ Close (Esc)" DockPanel.Dock="Right"
+                                Click="BtnCloseComments_Click" TabIndex="20"
+                                Background="#2A2A2A" Foreground="White" Padding="10,6"
+                                AutomationProperties.Name="Close comments drawer and return to reel. Press Escape." />
+                        <TextBlock x:Name="TxtCommentsHeader" Text="💬 Comments" 
+                                   Foreground="#FFFFFF" FontSize="16" FontWeight="Bold" VerticalAlignment="Center"
+                                   AutomationProperties.HeadingLevel="Level1" />
+                    </DockPanel>
+
+                    <!-- Accessible Comments List -->
+                    <ListBox x:Name="ListComments" Grid.Row="1" Background="#141414" BorderBrush="#2A2A2A"
+                             Foreground="White" ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+                             Margin="0,0,0,10" TabIndex="21"
+                             AutomationProperties.Name="Comments list. Use Up and Down arrows to navigate comments. Press Enter to like comment."
+                             KeyDown="ListComments_KeyDown">
+                        <ListBox.ItemTemplate>
+                            <DataTemplate>
+                                <Border BorderBrush="#252525" BorderThickness="0,0,0,1" Padding="10,8">
+                                    <Grid>
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="*" />
+                                            <ColumnDefinition Width="Auto" />
+                                        </Grid.ColumnDefinitions>
+
+                                        <StackPanel Grid.Column="0">
+                                            <StackPanel Orientation="Horizontal" Margin="0,0,0,4">
+                                                <TextBlock Text="{Binding Username, StringFormat='@{0}'}" 
+                                                           Foreground="#E1306C" FontWeight="Bold" FontSize="13" Margin="0,0,8,0" />
+                                                <TextBlock Text="{Binding CreatedAt}" Foreground="#888888" FontSize="11" VerticalAlignment="Center" />
+                                            </StackPanel>
+                                            <TextBlock Text="{Binding Text}" Foreground="#E0E0E0" TextWrapping="Wrap" FontSize="13" Margin="0,0,0,4" />
+                                            <TextBlock Text="{Binding FormattedLikes, StringFormat='❤️ {0} likes'}" 
+                                                       Foreground="#AAAAAA" FontSize="11"
+                                                       Visibility="{Binding LikesVisibility}" />
+                                        </StackPanel>
+
+                                        <Button Grid.Column="1" VerticalAlignment="Center" Margin="8,0,0,0"
+                                                Content="{Binding LikeButtonText}"
+                                                Click="BtnLikeCommentItem_Click" Tag="{Binding}"
+                                                Background="#2A2A2A" Foreground="White" Padding="8,5" FontSize="11"
+                                                AutomationProperties.Name="{Binding AccessibleText}" />
+                                    </Grid>
+                                </Border>
+                            </DataTemplate>
+                        </ListBox.ItemTemplate>
+                    </ListBox>
+
+                    <!-- Drawer Footer: Add Comment Box & Post Button -->
+                    <DockPanel Grid.Row="2">
+                        <Button x:Name="BtnDrawerPostComment" Content="Post" DockPanel.Dock="Right"
+                                Click="BtnDrawerPostComment_Click" TabIndex="23"
+                                Background="#007ACC" Foreground="White" FontWeight="Bold" Padding="14,6" Margin="6,0,0,0"
+                                AutomationProperties.Name="Post comment to reel" />
+                        <TextBox x:Name="TxtDrawerComment" Padding="8,6" Background="#262626" Foreground="White"
+                                 BorderBrush="#444444" KeyDown="TxtDrawerComment_KeyDown" TabIndex="22"
+                                 AutomationProperties.Name="Write a comment on this reel. Type your comment and press Enter to post." />
+                    </DockPanel>
+                </Grid>
+            </Border>
         </Grid>
 
         <!-- Bottom Accessible Status Bar & Controls -->
