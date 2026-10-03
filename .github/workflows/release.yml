@@ -1,0 +1,84 @@
+name: Build & Release WinInstagram
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-release:
+    name: Build & Publish Release
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup .NET SDK
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+          dotnet-quality: 'preview'
+
+      - name: Restore Dependencies
+        run: dotnet restore WinInstagram.csproj
+
+      - name: Publish Self-Contained Executable
+        run: >
+          dotnet publish WinInstagram.csproj
+          -c Release
+          -r win-x64
+          --self-contained true
+          -p:PublishSingleFile=true
+          -p:IncludeNativeLibrariesForSelfExtract=true
+          -o ./publish
+
+      - name: Create ZIP Archive
+        shell: pwsh
+        run: |
+          Compress-Archive -Path ./publish/* -DestinationPath WinInstagram-windows-x64.zip -Force
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: "v1.0.${{ github.run_number }}"
+          name: "WinInstagram v1.0.${{ github.run_number }}"
+          draft: false
+          prerelease: false
+          generate_release_notes: true
+          body: |
+            ## WinInstagram - Accessible Windows Client for Instagram 📸
+
+            ### ⬇️ Download & Run
+            1. Download **`WinInstagram-windows-x64.zip`** from the Assets below.
+            2. Extract the ZIP archive anywhere on your PC.
+            3. Double-click **`WinInstagram.exe`** to start using the app.
+            
+            > **Note:** This build is fully self-contained. You do **not** need to install any .NET runtime or SDK.
+
+            ---
+
+            ### ⌨️ Quick Keyboard Reference
+            - **Ctrl + 1**: Home Feed
+            - **Ctrl + 2**: Reels Player
+            - **Ctrl + 3**: Direct Messages
+            - **Ctrl + L**: Account / Login & Web Engine
+            - **PageDown / Down / J**: Next Reel (speaks creator, caption, likes)
+            - **PageUp / Up / K**: Previous Reel
+            - **Space**: Play / Pause
+            - **M**: Mute / Unmute
+            - **L**: Like / Unlike Reel
+            - **C**: Open / Close Accessible Comments Drawer
+            - **Up / Down** *(in Comments)*: Read comments item-by-item
+            - **Enter / Space** *(in Comments)*: Like selected comment
+            - **Escape**: Close Comments Drawer
+          files: |
+            WinInstagram-windows-x64.zip
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -4,6 +4,9 @@
 [![Platform: Windows](https://img.shields.io/badge/Platform-Windows-0078D6.svg)](https://microsoft.com/windows)
 [![.NET](https://img.shields.io/badge/.NET-10.0-512BD4.svg)](https://dotnet.microsoft.com/)
 [![Accessibility](https://img.shields.io/badge/Accessibility-Screen%20Reader%20Optimized-success.svg)](README.md)
+[![Latest Release](https://img.shields.io/github/v/release/ashu-choudhury/win_ig?label=Download%20Latest%20Release&color=success)](https://github.com/ashu-choudhury/win_ig/releases/latest)
+
+> 🚀 **Direct Download**: Get the latest standalone Windows version here: **[Download WinInstagram-windows-x64.zip](https://github.com/ashu-choudhury/win_ig/releases/latest)** *(No .NET installation required, just extract and run!)*
 
 **WinInstagram** is a high-performance, keyboard-first, native Windows desktop client for Instagram built with **WPF** and **.NET 10**. It is engineered from the ground up for **screen reader users (NVDA, JAWS, Narrator)** and power keyboard navigators.
 
