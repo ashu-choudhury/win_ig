@@ -1,0 +1,125 @@
+<Window x:Class="WinInstagram.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+        xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+        xmlns:local="clr-namespace:WinInstagram"
+        xmlns:views="clr-namespace:WinInstagram.Views"
+        mc:Ignorable="d"
+        Title="WinInstagram - Accessible Windows Client for Instagram" 
+        Height="800" Width="1100"
+        WindowStartupLocation="CenterScreen"
+        Background="#121212"
+        KeyboardNavigation.TabNavigation="Cycle"
+        KeyDown="Window_KeyDown"
+        Loaded="Window_Loaded">
+    <Grid>
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+            <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
+
+        <!-- Top Navigation Bar -->
+        <Border Grid.Row="0" Background="#1E1E1E" BorderBrush="#2D2D30" BorderThickness="0,0,0,1" Padding="12,8">
+            <DockPanel>
+                <!-- App Title -->
+                <StackPanel Orientation="Horizontal" DockPanel.Dock="Left" VerticalAlignment="Center" Margin="0,0,20,0">
+                    <TextBlock Text="📸 WinInstagram" Foreground="#E1306C" FontSize="18" FontWeight="Bold" VerticalAlignment="Center" />
+                </StackPanel>
+
+                <!-- Navigation Tabs -->
+                <StackPanel x:Name="NavBar" Orientation="Horizontal" DockPanel.Dock="Left">
+                    <RadioButton x:Name="NavHome" Content="Home Feed (Ctrl+1)" 
+                                 Checked="NavButton_Checked" Tag="Home" TabIndex="1"
+                                 Style="{StaticResource {x:Type ToggleButton}}"
+                                 Background="#2A2A2A" Foreground="White" FontWeight="SemiBold"
+                                 Padding="16,8" Margin="0,0,6,0"
+                                 AutomationProperties.Name="Home feed tab. Press Ctrl+1." />
+
+                    <RadioButton x:Name="NavReels" Content="Reels (Ctrl+2)" 
+                                 Checked="NavButton_Checked" Tag="Reels" TabIndex="2"
+                                 Style="{StaticResource {x:Type ToggleButton}}"
+                                 Background="#2A2A2A" Foreground="White" FontWeight="SemiBold"
+                                 Padding="16,8" Margin="0,0,6,0"
+                                 AutomationProperties.Name="Reels tab. Press Ctrl+2." />
+
+                    <RadioButton x:Name="NavMessages" Content="Messages (Ctrl+3)" 
+                                 Checked="NavButton_Checked" Tag="Messages" TabIndex="3"
+                                 Style="{StaticResource {x:Type ToggleButton}}"
+                                 Background="#2A2A2A" Foreground="White" FontWeight="SemiBold"
+                                 Padding="16,8" Margin="0,0,6,0"
+                                 AutomationProperties.Name="Direct messages tab. Press Ctrl+3." />
+
+                    <RadioButton x:Name="NavEngine" Content="Account / Login (Ctrl+L)" 
+                                 Checked="NavButton_Checked" Tag="Engine" TabIndex="4"
+                                 Style="{StaticResource {x:Type ToggleButton}}"
+                                 Background="#2A2A2A" Foreground="White" FontWeight="SemiBold"
+                                 Padding="16,8" Margin="0,0,6,0"
+                                 AutomationProperties.Name="Account and login tab. Press Ctrl+L." />
+                </StackPanel>
+
+                <!-- Status Badge -->
+                <StackPanel Orientation="Horizontal" DockPanel.Dock="Right" VerticalAlignment="Center">
+                    <Border x:Name="BadgeSession" Background="#333333" CornerRadius="12" Padding="12,4">
+                        <TextBlock x:Name="TxtSessionBadge" Text="Checking session..." Foreground="#AAAAAA" FontSize="12" FontWeight="SemiBold" />
+                    </Border>
+                </StackPanel>
+            </DockPanel>
+        </Border>
+
+        <!-- Main Content Area: Full Screen WebView2 Engine -->
+        <Grid Grid.Row="1" Focusable="False" KeyboardNavigation.IsTabStop="False" KeyboardNavigation.TabNavigation="None">
+            <!-- Full Screen Instagram WebView (Visible, Natural 60fps playback) -->
+            <views:LoginView x:Name="ViewLogin" Visibility="Visible" GotFocus="ViewLogin_GotFocus" 
+                             Focusable="False" KeyboardNavigation.IsTabStop="False" KeyboardNavigation.TabNavigation="None" TabIndex="99" />
+        </Grid>
+
+        <!-- Bottom Accessible Status Bar & Controls -->
+        <Border Grid.Row="2" Background="#181818" BorderBrush="#252526" BorderThickness="0,1,0,0" Padding="12,6">
+            <DockPanel>
+                <!-- Reel Playback Controls (Accessible for screen readers and keyboard users) -->
+                <StackPanel x:Name="ReelControlsPanel" Orientation="Horizontal" DockPanel.Dock="Left" Margin="0,0,16,0">
+                    <Button x:Name="BtnPrevReel" Content="◀ Prev (PageUp/Up/K)" Click="BtnPrevReel_Click" TabIndex="10"
+                            Background="#2A2A2A" Foreground="White" Padding="10,5" Margin="0,0,6,0"
+                            AutomationProperties.Name="Previous reel. Press PageUp or Up Arrow." />
+                    <Button x:Name="BtnPlayPauseReel" Content="⏯ Play/Pause (Space)" Click="BtnPlayPauseReel_Click" TabIndex="11"
+                            Background="#2A2A2A" Foreground="White" Padding="10,5" Margin="0,0,6,0"
+                            AutomationProperties.Name="Play or pause reel. Press Spacebar." />
+                    <Button x:Name="BtnNextReel" Content="Next ▶ (PageDown/Down/J)" Click="BtnNextReel_Click" TabIndex="12"
+                            Background="#007ACC" Foreground="White" FontWeight="Bold" Padding="10,5" Margin="0,0,6,0"
+                            AutomationProperties.Name="Next reel. Press PageDown or Down Arrow." />
+                    <Button x:Name="BtnMuteReel" Content="🔊 Mute (M)" Click="BtnMuteReel_Click" TabIndex="13"
+                            Background="#2A2A2A" Foreground="White" Padding="10,5" Margin="0,0,6,0"
+                            AutomationProperties.Name="Toggle audio mute. Press M." />
+                    <Button x:Name="BtnLikeReel" Content="❤️ Like (L)" Click="BtnLikeReel_Click" TabIndex="14"
+                            Background="#2A2A2A" Foreground="White" Padding="10,5" Margin="0,0,6,0"
+                            AutomationProperties.Name="Like reel. Press L." />
+                    <Button x:Name="BtnCommentsReel" Content="💬 Comments (C)" Click="BtnCommentsReel_Click" TabIndex="15"
+                            Background="#2A2A2A" Foreground="White" Padding="10,5" Margin="0,0,8,0"
+                            AutomationProperties.Name="Open comments drawer. Press C." />
+
+                    <!-- Quick Accessible Comment Input -->
+                    <TextBox x:Name="TxtQuickComment" Width="180" Padding="8,4" Background="#222222" Foreground="White" 
+                             BorderBrush="#444444" Margin="0,0,4,0" VerticalContentAlignment="Center"
+                             KeyDown="TxtQuickComment_KeyDown" TabIndex="16"
+                             AutomationProperties.Name="Write a comment on this reel. Type your comment and press Enter to post." />
+                    <Button x:Name="BtnPostComment" Content="Post" Click="BtnPostComment_Click" TabIndex="17"
+                            Background="#007ACC" Foreground="White" FontWeight="Bold" Padding="10,4" Margin="0,0,6,0"
+                            AutomationProperties.Name="Post comment to this reel" />
+                </StackPanel>
+
+                <!-- Shortcut Legend -->
+                <TextBlock Text="Ctrl+1 (Home) | Ctrl+2 (Reels) | Ctrl+3 (Messages) | Ctrl+L (Account)" 
+                           Foreground="#666666" FontSize="11" VerticalAlignment="Center" DockPanel.Dock="Right" />
+
+                <!-- Live Status Region -->
+                <TextBlock x:Name="TxtFooterStatus" 
+                           Text="Ready." 
+                           Foreground="#AAAAAA" FontSize="13" VerticalAlignment="Center" DockPanel.Dock="Left" 
+                           TextTrimming="CharacterEllipsis"
+                           AutomationProperties.LiveSetting="Polite" />
+            </DockPanel>
+        </Border>
+    </Grid>
+</Window>
