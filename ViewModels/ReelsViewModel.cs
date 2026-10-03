@@ -75,6 +75,7 @@ public class ReelsViewModel : INotifyPropertyChanged
                 _isPlaying = value;
                 OnPropertyChanged();
                 OnPropertyChanged(nameof(PlayButtonText));
+                OnPropertyChanged(nameof(PlayButtonAutomationText));
                 OnPropertyChanged(nameof(PlaybackStatusText));
                 AccessibilityHelper.Announce(_isPlaying ? "Playing" : "Paused");
             }
@@ -82,6 +83,7 @@ public class ReelsViewModel : INotifyPropertyChanged
     }
 
     public string PlayButtonText => IsPlaying ? "Pause (Space)" : "Play (Space)";
+    public string PlayButtonAutomationText => IsPlaying ? "Pause reel. Press Spacebar." : "Play reel. Press Spacebar.";
     public string PlaybackStatusText => IsPlaying ? "▶ Playing in Web Engine" : "⏸ Paused";
 
     public bool IsCommentsOpen
@@ -120,6 +122,7 @@ public class ReelsViewModel : INotifyPropertyChanged
     private void OnActiveReelChanged(ReelItem reel, bool isPlaying, bool isMuted, double vol)
     {
         bool isNew = CurrentReel == null || CurrentReel.Username != reel.Username || CurrentReel.Caption != reel.Caption;
+        bool playChanged = _isPlaying != isPlaying;
 
         CurrentReel = reel;
         _isPlaying = isPlaying;
@@ -128,17 +131,22 @@ public class ReelsViewModel : INotifyPropertyChanged
 
         OnPropertyChanged(nameof(IsPlaying));
         OnPropertyChanged(nameof(PlayButtonText));
+        OnPropertyChanged(nameof(PlayButtonAutomationText));
         OnPropertyChanged(nameof(PlaybackStatusText));
         OnPropertyChanged(nameof(IsMuted));
         OnPropertyChanged(nameof(MuteButtonText));
         OnPropertyChanged(nameof(Volume));
 
-        StatusMessage = $"Playing reel by @{reel.Username}";
+        StatusMessage = isPlaying ? $"Playing reel by @{reel.Username}" : $"Paused reel by @{reel.Username}";
 
         if (isNew)
         {
             _lastAnnouncedReelId = reel.Id;
             AccessibilityHelper.Announce(reel.AccessibleDescription);
+        }
+        else if (playChanged)
+        {
+            AccessibilityHelper.Announce(isPlaying ? "Playing" : "Paused");
         }
     }
 

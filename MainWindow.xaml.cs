@@ -14,6 +14,7 @@ public partial class MainWindow : Window
     private bool _hasTransitionedToHome = false;
     private string _currentTab = "";
     private ReelItem? _activeReel;
+    private bool _isPlaying = true;
     private readonly ObservableCollection<InstagramComment> _activeComments = new();
 
     public MainWindow()
@@ -37,7 +38,11 @@ public partial class MainWindow : Window
         {
             Dispatcher.Invoke(() =>
             {
-                if (_activeReel?.Id != reel.Id)
+                bool isNew = _activeReel == null || _activeReel.Id != reel.Id;
+                bool playStateChanged = _isPlaying != isPlaying;
+                _isPlaying = isPlaying;
+
+                if (isNew)
                 {
                     _activeComments.Clear();
                 }
@@ -52,6 +57,7 @@ public partial class MainWindow : Window
                 TxtFooterStatus.Text = $"@{reel.Username}{likesInfo}{captionSnippet}";
 
                 BtnPlayPauseReel.Content = isPlaying ? "⏸ Pause (Space)" : "▶ Play (Space)";
+                System.Windows.Automation.AutomationProperties.SetName(BtnPlayPauseReel, isPlaying ? "Pause reel. Press Spacebar." : "Play reel. Press Spacebar.");
                 BtnMuteReel.Content = isMuted ? "🔇 Unmute (M)" : "🔊 Mute (M)";
                 BtnLikeReel.Content = likeBtnLabel;
 
@@ -60,8 +66,15 @@ public partial class MainWindow : Window
                     : $"Like reel by {reel.Username}. {reel.FormattedLikes} likes. Press L to like.";
                 System.Windows.Automation.AutomationProperties.SetName(BtnLikeReel, likeAnnounce);
 
-                var announceMsg = $"Reel by @{reel.Username}. {(!string.IsNullOrWhiteSpace(reel.FormattedLikes) ? reel.FormattedLikes + " likes. " : "")}{reel.Caption}";
-                AccessibilityHelper.Announce(announceMsg);
+                if (isNew)
+                {
+                    var announceMsg = $"Reel by @{reel.Username}. {(!string.IsNullOrWhiteSpace(reel.FormattedLikes) ? reel.FormattedLikes + " likes. " : "")}{reel.Caption}";
+                    AccessibilityHelper.Announce(announceMsg);
+                }
+                else if (playStateChanged)
+                {
+                    AccessibilityHelper.Announce(isPlaying ? "Playing" : "Paused");
+                }
             });
         };
 

@@ -90,9 +90,6 @@ public class InstagramBridgeService
                 if (window.__winInstagram_unmuted && v.muted) {
                     v.muted = false;
                 }
-                if (v.paused) {
-                    v.play().catch(() => {});
-                }
 
                 // 1. Exact Creator Username
                 let username = '';
@@ -412,14 +409,26 @@ public class InstagramBridgeService
 
         window.__winInstagram.togglePlay = function() {
             try {
-                const v = document.querySelector('video');
+                const info = getActiveReel();
+                const v = (info && info.video) ? info.video : document.querySelector('video');
                 if (v) {
-                    if (v.paused) v.play().catch(() => {});
-                    else v.pause();
-                    setTimeout(syncState, 150);
+                    if (v.paused) {
+                        const p = v.play();
+                        if (p && typeof p.catch === 'function') {
+                            p.catch(() => {
+                                dispatchKey(' ', 'Space', 32);
+                            });
+                        }
+                    } else {
+                        document.querySelectorAll('video').forEach(vid => {
+                            try { vid.pause(); } catch(e) {}
+                        });
+                    }
+                    syncState();
                     return !v.paused;
                 }
                 dispatchKey(' ', 'Space', 32);
+                setTimeout(syncState, 150);
                 return true;
             } catch(e) { return false; }
         };
@@ -540,6 +549,12 @@ public class InstagramBridgeService
         window.__winInstagram.sync = syncState;
 
         document.addEventListener('play', (e) => {
+            if (e.target && e.target.tagName === 'VIDEO') {
+                setTimeout(syncState, 200);
+            }
+        }, true);
+
+        document.addEventListener('pause', (e) => {
             if (e.target && e.target.tagName === 'VIDEO') {
                 setTimeout(syncState, 200);
             }
