@@ -167,20 +167,29 @@
                 <StackPanel>
                     <TextBlock Text="Reel Actions" Foreground="White" FontSize="18" FontWeight="Bold" Margin="0,0,0,12" />
 
-                    <!-- Like and Comments Buttons -->
-                    <UniformGrid Columns="2" Margin="0,0,0,16">
+                    <!-- Like, Comments, and Share Buttons -->
+                    <UniformGrid Columns="3" Margin="0,0,0,16">
                         <Button x:Name="BtnLike" Click="BtnLike_Click" 
                                 Content="{Binding CurrentReel.ReelLikeButtonText, FallbackValue='🤍 Like (L)'}"
-                                Background="#2A2A2A" Foreground="White" Padding="12" Margin="0,0,5,0"
+                                Background="#2A2A2A" Foreground="White" Padding="8,12" Margin="0,0,4,0"
                                 AutomationProperties.Name="Like this reel. Press L."
                                 AutomationProperties.HelpText="Toggles like status." />
 
                         <Button x:Name="BtnComments" Click="BtnComments_Click" 
-                                Background="#2A2A2A" Foreground="White" Padding="12" Margin="5,0,0,0"
+                                Background="#2A2A2A" Foreground="White" Padding="8,12" Margin="2,0,2,0"
                                 AutomationProperties.Name="Open comments drawer. Press C."
                                 AutomationProperties.HelpText="Opens list of comments for this reel.">
-                            <StackPanel Orientation="Horizontal">
+                            <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
                                 <TextBlock Text="💬 Comments (C)" FontWeight="Bold" />
+                            </StackPanel>
+                        </Button>
+
+                        <Button x:Name="BtnShare" Click="BtnShare_Click" 
+                                Background="#2A2A2A" Foreground="White" Padding="8,12" Margin="4,0,0,0"
+                                AutomationProperties.Name="Share this reel. Copies link to clipboard. Press S."
+                                AutomationProperties.HelpText="Copies reel link to clipboard.">
+                            <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
+                                <TextBlock Text="🔗 Share (S)" FontWeight="Bold" />
                             </StackPanel>
                         </Button>
                     </UniformGrid>
@@ -205,6 +214,7 @@
                             <TextBlock Text="• Spacebar: Play / Pause" Foreground="#CCCCCC" Margin="0,3" />
                             <TextBlock Text="• M: Mute / Unmute" Foreground="#CCCCCC" Margin="0,3" />
                             <TextBlock Text="• L: Like Reel" Foreground="#CCCCCC" Margin="0,3" />
+                            <TextBlock Text="• S: Share Reel (Copies link to clipboard)" Foreground="#CCCCCC" Margin="0,3" />
                             <TextBlock Text="• C: Toggle Comments Drawer" Foreground="#CCCCCC" Margin="0,3" />
                             <TextBlock Text="• + / - : Increase / Decrease Volume" Foreground="#CCCCCC" Margin="0,3" />
                         </StackPanel>

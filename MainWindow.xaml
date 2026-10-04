@@ -44,19 +44,33 @@
                                  Padding="16,8" Margin="0,0,6,0"
                                  AutomationProperties.Name="Reels tab. Press Ctrl+2." />
 
-                    <RadioButton x:Name="NavMessages" Content="Messages (Ctrl+3)" 
-                                 Checked="NavButton_Checked" Tag="Messages" TabIndex="3"
+                    <RadioButton x:Name="NavSearch" Content="🔍 Search / Open Link (Ctrl+3)" 
+                                 Checked="NavButton_Checked" Tag="Search" TabIndex="3"
                                  Style="{StaticResource {x:Type ToggleButton}}"
                                  Background="#2A2A2A" Foreground="White" FontWeight="SemiBold"
                                  Padding="16,8" Margin="0,0,6,0"
-                                 AutomationProperties.Name="Direct messages tab. Press Ctrl+3." />
+                                 AutomationProperties.Name="Search or open Instagram link tab. Press Ctrl+3." />
+
+                    <RadioButton x:Name="NavMessages" Content="Messages (Ctrl+4)" 
+                                 Checked="NavButton_Checked" Tag="Messages" TabIndex="4"
+                                 Style="{StaticResource {x:Type ToggleButton}}"
+                                 Background="#2A2A2A" Foreground="White" FontWeight="SemiBold"
+                                 Padding="16,8" Margin="0,0,6,0"
+                                 AutomationProperties.Name="Direct messages tab. Press Ctrl+4." />
 
                     <RadioButton x:Name="NavEngine" Content="Account / Login (Ctrl+L)" 
-                                 Checked="NavButton_Checked" Tag="Engine" TabIndex="4"
+                                 Checked="NavButton_Checked" Tag="Engine" TabIndex="5"
                                  Style="{StaticResource {x:Type ToggleButton}}"
                                  Background="#2A2A2A" Foreground="White" FontWeight="SemiBold"
                                  Padding="16,8" Margin="0,0,6,0"
                                  AutomationProperties.Name="Account and login tab. Press Ctrl+L." />
+
+                    <RadioButton x:Name="NavSettings" Content="⚙️ Settings (Ctrl+5)" 
+                                 Checked="NavButton_Checked" Tag="Settings" TabIndex="6"
+                                 Style="{StaticResource {x:Type ToggleButton}}"
+                                 Background="#2A2A2A" Foreground="White" FontWeight="SemiBold"
+                                 Padding="16,8" Margin="0,0,6,0"
+                                 AutomationProperties.Name="Settings and integrations tab. Press Ctrl+5." />
                 </StackPanel>
 
                 <!-- Status Badge & Update Check -->
@@ -197,6 +211,93 @@
                     </UniformGrid>
                 </StackPanel>
             </Border>
+
+            <!-- Accessible Settings Overlay Modal Dialog -->
+            <Border x:Name="SettingsOverlay" HorizontalAlignment="Center" VerticalAlignment="Center"
+                    Width="600" Background="#1E1E1E" BorderBrush="#007ACC" BorderThickness="2" CornerRadius="12"
+                    Padding="24" Visibility="Collapsed" Panel.ZIndex="1000"
+                    KeyboardNavigation.TabNavigation="Cycle">
+                <StackPanel>
+                    <!-- Header -->
+                    <DockPanel Margin="0,0,0,16">
+                        <TextBlock Text="⚙️ WinInstagram Settings" Foreground="#FFFFFF" FontSize="20" FontWeight="Bold" VerticalAlignment="Center" />
+                        <Button x:Name="BtnCloseSettings" Content="✖ Close (Esc)" DockPanel.Dock="Right"
+                                Click="BtnCloseSettings_Click" TabIndex="40"
+                                Background="#2A2A2A" Foreground="White" Padding="10,6"
+                                AutomationProperties.Name="Close settings dialog and return to app. Press Escape." />
+                    </DockPanel>
+
+                    <!-- Web-to-App Linking Section -->
+                    <Border Background="#141414" BorderBrush="#2D2D30" BorderThickness="1" CornerRadius="8" Padding="16" Margin="0,0,0,16">
+                        <StackPanel>
+                            <TextBlock Text="🔗 Web-to-App Linking &amp; Sharing" Foreground="#4EC9B0" FontSize="15" FontWeight="Bold" Margin="0,0,0,6" />
+                            <TextBlock Text="Configure Windows to open shared Instagram links directly in WinInstagram rather than opening an external browser."
+                                       Foreground="#AAAAAA" FontSize="12" TextWrapping="Wrap" Margin="0,0,0,12" />
+
+                            <!-- Checkbox for AppUriHandler & Protocols -->
+                            <CheckBox x:Name="ChkRegisterAppUri"
+                                      Content="Open instagram.com links in WinInstagram"
+                                      Foreground="White" FontSize="14" FontWeight="SemiBold"
+                                      Checked="ChkRegisterAppUri_Checked"
+                                      Unchecked="ChkRegisterAppUri_Unchecked"
+                                      TabIndex="41"
+                                      Margin="0,0,0,6"
+                                      AutomationProperties.Name="Enable opening instagram.com links in WinInstagram" />
+
+                            <TextBlock Text="Registers WinInstagram for web-to-app linking and system protocols (wininstagram:// &amp; instagram://)."
+                                       Foreground="#888888" FontSize="11" TextWrapping="Wrap" Margin="24,0,0,12" />
+
+                            <!-- Live Status Indicator -->
+                            <Border Background="#222222" CornerRadius="6" Padding="12,8">
+                                <StackPanel Orientation="Horizontal">
+                                    <TextBlock Text="Integration Status: " Foreground="#888888" FontWeight="SemiBold" FontSize="12" />
+                                    <TextBlock x:Name="TxtAppUriStatus" Text="Checking..." Foreground="#4EC9B0" FontWeight="Bold" FontSize="12"
+                                               AutomationProperties.LiveSetting="Polite" />
+                                </StackPanel>
+                            </Border>
+                        </StackPanel>
+                    </Border>
+
+                    <!-- Accessible Shortcuts Reference -->
+                    <Border Background="#141414" BorderBrush="#2D2D30" BorderThickness="1" CornerRadius="8" Padding="14">
+                        <StackPanel>
+                            <TextBlock Text="⌨️ Useful Shortcuts" Foreground="#CCCCCC" FontSize="13" FontWeight="Bold" Margin="0,0,0,6" />
+                            <TextBlock Text="• Ctrl+1: Home Feed | Ctrl+2: Reels | Ctrl+3: Search &amp; Open Link | Ctrl+4: Messages | Ctrl+5: Settings" Foreground="#888888" FontSize="12" Margin="0,2" />
+                            <TextBlock Text="• In Reels: S to Share link | L to Like | Space to Play/Pause | M to Mute | C for Comments" Foreground="#888888" FontSize="12" Margin="0,2" />
+                        </StackPanel>
+                    </Border>
+                </StackPanel>
+            </Border>
+
+            <!-- Accessible Search & Open Instagram Link Top Bar Panel -->
+            <Border x:Name="SearchBarPanel" VerticalAlignment="Top" HorizontalAlignment="Stretch"
+                    Background="#1E1E1E" BorderBrush="#007ACC" BorderThickness="0,0,0,2"
+                    Padding="16,12" Visibility="Collapsed" Panel.ZIndex="500">
+                <DockPanel>
+                    <!-- Close Search Bar button -->
+                    <Button x:Name="BtnCloseSearch" Content="✖ (Esc)" DockPanel.Dock="Right"
+                            Click="BtnCloseSearch_Click" TabIndex="6"
+                            Background="#2A2A2A" Foreground="White" Padding="10,6" Margin="8,0,0,0"
+                            AutomationProperties.Name="Close search bar. Press Escape." />
+
+                    <!-- Paste & Open Button -->
+                    <Button x:Name="BtnPasteAndOpen" Content="📋 Paste &amp; Open" DockPanel.Dock="Right"
+                            Click="BtnPasteAndOpen_Click" TabIndex="5"
+                            Background="#2A2A2A" Foreground="#4EC9B0" FontWeight="SemiBold" Padding="12,6" Margin="6,0,0,0"
+                            AutomationProperties.Name="Paste link from clipboard and open immediately" />
+
+                    <!-- Open Button -->
+                    <Button x:Name="BtnOpenSearchLink" Content="🚀 Open Reel / Post" DockPanel.Dock="Right"
+                            Click="BtnOpenSearchLink_Click" TabIndex="4"
+                            Background="#007ACC" Foreground="White" FontWeight="Bold" Padding="14,6" Margin="8,0,0,0"
+                            AutomationProperties.Name="Open entered Instagram link or reel" />
+
+                    <!-- Search / Link Input Box -->
+                    <TextBox x:Name="TxtSearchInput" Padding="10,6" Background="#262626" Foreground="White"
+                             BorderBrush="#444444" FontSize="14" KeyDown="TxtSearchInput_KeyDown" TabIndex="3"
+                             AutomationProperties.Name="Instagram reel or post URL. Paste or type link and press Enter." />
+                </DockPanel>
+            </Border>
         </Grid>
 
         <!-- Bottom Accessible Status Bar & Controls -->
@@ -219,7 +320,10 @@
                     <Button x:Name="BtnLikeReel" Content="❤️ Like (L)" Click="BtnLikeReel_Click" TabIndex="14"
                             Background="#2A2A2A" Foreground="White" Padding="10,5" Margin="0,0,6,0"
                             AutomationProperties.Name="Like reel. Press L." />
-                    <Button x:Name="BtnCommentsReel" Content="💬 Comments (C)" Click="BtnCommentsReel_Click" TabIndex="15"
+                    <Button x:Name="BtnShareReel" Content="🔗 Share (S)" Click="BtnShareReel_Click" TabIndex="15"
+                            Background="#2A2A2A" Foreground="White" Padding="10,5" Margin="0,0,6,0"
+                            AutomationProperties.Name="Share active reel. Copies link to clipboard. Press S." />
+                    <Button x:Name="BtnCommentsReel" Content="💬 Comments (C)" Click="BtnCommentsReel_Click" TabIndex="16"
                             Background="#2A2A2A" Foreground="White" Padding="10,5" Margin="0,0,8,0"
                             AutomationProperties.Name="Open comments drawer. Press C." />
 
@@ -234,7 +338,7 @@
                 </StackPanel>
 
                 <!-- Shortcut Legend -->
-                <TextBlock Text="Ctrl+1 (Home) | Ctrl+2 (Reels) | Ctrl+3 (Messages) | Ctrl+L (Account) | Ctrl+U (Updates)" 
+                <TextBlock Text="Ctrl+1 (Home) | Ctrl+2 (Reels) | Ctrl+3 (Search) | Ctrl+4 (Messages) | Ctrl+L (Account) | Ctrl+5 (Settings) | Ctrl+U (Updates)" 
                            Foreground="#666666" FontSize="11" VerticalAlignment="Center" DockPanel.Dock="Right" />
 
                 <!-- Live Status Region -->

@@ -5,9 +5,22 @@ namespace WinInstagram;
 
 public partial class App : Application
 {
+    public static string InitialLaunchUrl { get; private set; } = string.Empty;
+
     protected override void OnStartup(StartupEventArgs e)
     {
         base.OnStartup(e);
+
+        if (!DeepLinkService.Instance.CheckSingleInstanceAndForward(e.Args))
+        {
+            Shutdown();
+            return;
+        }
+
+        if (e.Args.Length > 0)
+        {
+            InitialLaunchUrl = DeepLinkService.NormalizeInstagramUrl(string.Join(" ", e.Args));
+        }
 
         AppDomain.CurrentDomain.UnhandledException += (s, args) =>
         {
@@ -27,5 +40,11 @@ public partial class App : Application
         };
 
         AppLogger.Info("APP", "=== WinInstagram Application Starting ===");
+    }
+
+    protected override void OnExit(ExitEventArgs e)
+    {
+        DeepLinkService.Instance.Shutdown();
+        base.OnExit(e);
     }
 }

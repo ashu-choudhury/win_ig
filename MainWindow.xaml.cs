@@ -39,6 +39,21 @@ public partial class MainWindow : Window
             await UpdateService.Instance.CheckForUpdatesAsync(isManual: false);
         });
 
+        DeepLinkService.Instance.LinkActivated += (url) =>
+        {
+            Dispatcher.Invoke(() => NavigateToDeepLink(url));
+        };
+        RefreshAppUriStatus();
+
+        if (!string.IsNullOrWhiteSpace(App.InitialLaunchUrl))
+        {
+            _ = Task.Run(async () =>
+            {
+                await Task.Delay(1000);
+                Dispatcher.Invoke(() => NavigateToDeepLink(App.InitialLaunchUrl));
+            });
+        }
+
         ViewLogin.LoginSucceeded += OnLoginSucceeded;
         InstagramBridgeService.Instance.LoginStatusChanged += OnLoginStatusChanged;
         InstagramBridgeService.Instance.CommentsReceived += OnCommentsReceived;
@@ -144,6 +159,7 @@ public partial class MainWindow : Window
             _hasTransitionedToHome = true;
             NavHome.IsEnabled = true;
             NavReels.IsEnabled = true;
+            NavSearch.IsEnabled = true;
             NavMessages.IsEnabled = true;
 
             // Automatically switch to Home Feed
@@ -192,11 +208,225 @@ public partial class MainWindow : Window
                 InstagramBridgeService.Instance.NavigateToReels();
                 break;
 
+            case "Search":
+                ReelControlsPanel.Visibility = Visibility.Collapsed;
+                OpenSearchBar();
+                break;
+
             case "Messages":
                 ReelControlsPanel.Visibility = Visibility.Collapsed;
+                CloseSearchBar();
                 AccessibilityHelper.Announce("Direct Messages. Showing full-screen live Instagram messages.");
                 InstagramBridgeService.Instance.Navigate("https://www.instagram.com/direct/inbox/");
                 break;
+
+            case "Settings":
+                ReelControlsPanel.Visibility = Visibility.Collapsed;
+                CloseSearchBar();
+                OpenSettingsDialog();
+                break;
+        }
+    }
+
+    private void OpenSearchBar()
+    {
+        SearchBarPanel.Visibility = Visibility.Visible;
+        TxtSearchInput.Focus();
+        TxtSearchInput.SelectAll();
+        AccessibilityHelper.Announce("Search and open link bar opened. Paste or type an Instagram reel or post link and press Enter, or press Escape to close.");
+    }
+
+    private void CloseSearchBar()
+    {
+        SearchBarPanel.Visibility = Visibility.Collapsed;
+        if (_currentTab == "Search")
+        {
+            if (NavHome.IsEnabled) NavHome.IsChecked = true;
+            else NavEngine.IsChecked = true;
+        }
+    }
+
+    private void BtnCloseSearch_Click(object sender, RoutedEventArgs e) => CloseSearchBar();
+
+    private void TxtSearchInput_KeyDown(object sender, KeyEventArgs e)
+    {
+        if (e.Key == Key.Enter)
+        {
+            OpenEnteredSearchLink();
+            e.Handled = true;
+        }
+        else if (e.Key == Key.Escape)
+        {
+            CloseSearchBar();
+            e.Handled = true;
+        }
+    }
+
+    private void BtnOpenSearchLink_Click(object sender, RoutedEventArgs e) => OpenEnteredSearchLink();
+
+    private void BtnPasteAndOpen_Click(object sender, RoutedEventArgs e)
+    {
+        try
+        {
+            if (Clipboard.ContainsText())
+            {
+                var text = Clipboard.GetText()?.Trim();
+                if (!string.IsNullOrWhiteSpace(text))
+                {
+                    TxtSearchInput.Text = text;
+                    OpenEnteredSearchLink();
+                    return;
+                }
+            }
+            AccessibilityHelper.Announce("Clipboard is empty or does not contain text.");
+        }
+        catch (Exception ex)
+        {
+            AppLogger.Error("SEARCH", "Failed reading clipboard", ex);
+            AccessibilityHelper.Announce("Could not read clipboard.");
+        }
+    }
+
+    private void OpenEnteredSearchLink()
+    {
+        var raw = TxtSearchInput.Text?.Trim();
+        if (string.IsNullOrWhiteSpace(raw))
+        {
+            AccessibilityHelper.Announce("Please enter an Instagram reel or post URL.");
+            TxtSearchInput.Focus();
+            return;
+        }
+
+        var normalized = DeepLinkService.NormalizeInstagramUrl(raw);
+        if (string.IsNullOrWhiteSpace(normalized))
+        {
+            if (raw.StartsWith("http", StringComparison.OrdinalIgnoreCase)) normalized = raw;
+            else normalized = "https://www.instagram.com/" + raw.TrimStart('/');
+        }
+
+        SearchBarPanel.Visibility = Visibility.Collapsed;
+        NavigateToDeepLink(normalized);
+    }
+
+    private void OpenSettingsDialog()
+    {
+        SettingsOverlay.Visibility = Visibility.Visible;
+        RefreshAppUriStatus();
+        ChkRegisterAppUri.Focus();
+        AccessibilityHelper.Announce("Settings dialog opened. Use Tab to navigate options or Escape to close.");
+    }
+
+    private void CloseSettingsDialog()
+    {
+        SettingsOverlay.Visibility = Visibility.Collapsed;
+        if (_currentTab == "Settings")
+        {
+            if (NavHome.IsEnabled) NavHome.IsChecked = true;
+            else NavEngine.IsChecked = true;
+        }
+        else
+        {
+            if (NavReels.IsChecked == true) BtnNextReel.Focus();
+            else NavHome.Focus();
+        }
+        AccessibilityHelper.Announce("Settings dialog closed.");
+    }
+
+    private void BtnCloseSettings_Click(object sender, RoutedEventArgs e) => CloseSettingsDialog();
+
+    private void RefreshAppUriStatus()
+    {
+        bool isRegistered = AppUriHandlerService.Instance.IsRegistered();
+        ChkRegisterAppUri.IsChecked = isRegistered;
+        TxtAppUriStatus.Text = isRegistered 
+            ? "Active (Links configured to open in WinInstagram)" 
+            : "Inactive (Not registered)";
+        TxtAppUriStatus.Foreground = isRegistered 
+            ? new SolidColorBrush(Color.FromRgb(78, 201, 176)) 
+            : new SolidColorBrush(Color.FromRgb(200, 200, 200));
+    }
+
+    private async void ChkRegisterAppUri_Checked(object sender, RoutedEventArgs e)
+    {
+        TxtAppUriStatus.Text = "Registering...";
+        AccessibilityHelper.Announce("Registering WinInstagram for instagram.com web and protocol links...");
+        var (success, message) = await AppUriHandlerService.Instance.RegisterAsync();
+        RefreshAppUriStatus();
+        AccessibilityHelper.Announce(message);
+    }
+
+    private async void ChkRegisterAppUri_Unchecked(object sender, RoutedEventArgs e)
+    {
+        TxtAppUriStatus.Text = "Unregistering...";
+        AccessibilityHelper.Announce("Unregistering WinInstagram links...");
+        var (success, message) = await AppUriHandlerService.Instance.UnregisterAsync();
+        RefreshAppUriStatus();
+        AccessibilityHelper.Announce(message);
+    }
+
+    private void BtnShareReel_Click(object sender, RoutedEventArgs e) => ShareActiveReel();
+
+    private void ShareActiveReel()
+    {
+        if (_activeReel == null)
+        {
+            AccessibilityHelper.Announce("No active reel to share.");
+            return;
+        }
+
+        string shareUrl = !string.IsNullOrWhiteSpace(_activeReel.Id) && _activeReel.Id.StartsWith("http", StringComparison.OrdinalIgnoreCase)
+            ? _activeReel.Id
+            : "https://www.instagram.com/reels/";
+
+        shareUrl = DeepLinkService.NormalizeInstagramUrl(shareUrl);
+        if (string.IsNullOrWhiteSpace(shareUrl))
+        {
+            shareUrl = "https://www.instagram.com/reels/";
+        }
+
+        try
+        {
+            Clipboard.SetText(shareUrl);
+            var announce = $"Reel link copied to clipboard: {shareUrl}. You can now share it with friends.";
+            TxtFooterStatus.Text = announce;
+            AccessibilityHelper.Announce(announce);
+        }
+        catch (Exception ex)
+        {
+            AppLogger.Error("SHARE", "Failed to copy reel link to clipboard", ex);
+            AccessibilityHelper.Announce("Failed to copy link to clipboard.");
+        }
+    }
+
+    private void NavigateToDeepLink(string url)
+    {
+        if (string.IsNullOrWhiteSpace(url)) return;
+
+        AppLogger.Info("DEEP_LINK", $"Handling deep link: {url}");
+
+        // Bring window to foreground
+        if (WindowState == WindowState.Minimized)
+        {
+            WindowState = WindowState.Normal;
+        }
+        Activate();
+        Focus();
+
+        var normalized = DeepLinkService.NormalizeInstagramUrl(url);
+        if (string.IsNullOrWhiteSpace(normalized)) normalized = url;
+
+        // If it's a reel link, switch to reels tab and navigate
+        if (normalized.Contains("/reel/") || normalized.Contains("/reels/"))
+        {
+            NavReels.IsChecked = true;
+            InstagramBridgeService.Instance.Navigate(normalized);
+            AccessibilityHelper.Announce($"Opening shared reel: {normalized}");
+        }
+        else
+        {
+            NavHome.IsChecked = true;
+            InstagramBridgeService.Instance.Navigate(normalized);
+            AccessibilityHelper.Announce($"Opening shared link: {normalized}");
         }
     }
 
@@ -407,6 +637,22 @@ public partial class MainWindow : Window
             }
         }
 
+        // 0.4. If search bar is visible, Escape key closes it
+        if (SearchBarPanel.Visibility == Visibility.Visible && e.Key == Key.Escape)
+        {
+            CloseSearchBar();
+            e.Handled = true;
+            return;
+        }
+
+        // 0.5. If settings overlay is visible, Escape key closes it
+        if (SettingsOverlay.Visibility == Visibility.Visible && e.Key == Key.Escape)
+        {
+            CloseSettingsDialog();
+            e.Handled = true;
+            return;
+        }
+
         // 1. If comments drawer is visible, Escape key closes it
         if (e.Key == Key.Escape && CommentsDrawer.Visibility == Visibility.Visible)
         {
@@ -415,7 +661,7 @@ public partial class MainWindow : Window
             return;
         }
 
-        // 2. Global Tab Navigation & Update hotkeys (Ctrl+1, Ctrl+2, Ctrl+3, Ctrl+L, Ctrl+U)
+        // 2. Global Tab Navigation & Update hotkeys (Ctrl+1: Home, Ctrl+2: Reels, Ctrl+3: Search, Ctrl+4: Messages, Ctrl+5: Settings, Ctrl+L: Account, Ctrl+U: Updates)
         var isCtrl = (Keyboard.Modifiers & ModifierKeys.Control) == ModifierKeys.Control;
         if (isCtrl)
         {
@@ -440,14 +686,25 @@ public partial class MainWindow : Window
 
                 case Key.D3:
                 case Key.NumPad3:
+                    NavSearch.IsChecked = true;
+                    e.Handled = true;
+                    return;
+
+                case Key.D4:
+                case Key.NumPad4:
                     if (NavMessages.IsEnabled) NavMessages.IsChecked = true;
                     e.Handled = true;
                     return;
 
                 case Key.L:
-                case Key.D4:
-                case Key.NumPad4:
                     NavEngine.IsChecked = true;
+                    e.Handled = true;
+                    return;
+
+                case Key.D5:
+                case Key.NumPad5:
+                case Key.OemComma:
+                    NavSettings.IsChecked = true;
                     e.Handled = true;
                     return;
             }
@@ -490,6 +747,11 @@ public partial class MainWindow : Window
 
                 case Key.L:
                     ToggleActiveReelLike();
+                    e.Handled = true;
+                    break;
+
+                case Key.S:
+                    ShareActiveReel();
                     e.Handled = true;
                     break;
 

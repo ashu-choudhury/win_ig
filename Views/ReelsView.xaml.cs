@@ -67,6 +67,11 @@ public partial class ReelsView : UserControl
                 e.Handled = true;
                 break;
 
+            case Key.S:
+                ShareReel();
+                e.Handled = true;
+                break;
+
             case Key.C:
                 ViewModel.ToggleComments();
                 e.Handled = true;
@@ -100,7 +105,39 @@ public partial class ReelsView : UserControl
     private void MuteBtn_Click(object sender, RoutedEventArgs e) => ViewModel.ToggleMute();
     private void BtnLike_Click(object sender, RoutedEventArgs e) => ViewModel.ToggleLike();
     private void BtnComments_Click(object sender, RoutedEventArgs e) => ViewModel.ToggleComments();
+    private void BtnShare_Click(object sender, RoutedEventArgs e) => ShareReel();
     private void CloseComments_Click(object sender, RoutedEventArgs e) => ViewModel.IsCommentsOpen = false;
+
+    private void ShareReel()
+    {
+        var reel = ViewModel.CurrentReel;
+        if (reel == null)
+        {
+            AccessibilityHelper.Announce("No active reel to share.");
+            return;
+        }
+
+        string shareUrl = !string.IsNullOrWhiteSpace(reel.Id) && reel.Id.StartsWith("http", StringComparison.OrdinalIgnoreCase)
+            ? reel.Id
+            : "https://www.instagram.com/reels/";
+
+        shareUrl = DeepLinkService.NormalizeInstagramUrl(shareUrl);
+        if (string.IsNullOrWhiteSpace(shareUrl))
+        {
+            shareUrl = "https://www.instagram.com/reels/";
+        }
+
+        try
+        {
+            Clipboard.SetText(shareUrl);
+            AccessibilityHelper.Announce($"Reel link copied to clipboard: {shareUrl}");
+        }
+        catch (Exception ex)
+        {
+            AppLogger.Error("SHARE", "Failed to copy reel link", ex);
+            AccessibilityHelper.Announce("Failed to copy link to clipboard.");
+        }
+    }
 
     private void PostComment_Click(object sender, RoutedEventArgs e)
     {
