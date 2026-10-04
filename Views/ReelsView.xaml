@@ -65,7 +65,7 @@
                         <!-- Live Status Indicators -->
                         <WrapPanel Margin="0,0,0,16">
                             <Border Background="#2A2A2A" CornerRadius="6" Padding="10,6" Margin="0,0,8,8">
-                                <TextBlock Text="{Binding CurrentReel.FormattedLikes, StringFormat='❤️ {0} Likes'}" 
+                                <TextBlock Text="{Binding CurrentReel.LikesDisplayText, FallbackValue='❤️ Likes'}" 
                                            Foreground="#FF6B81" FontWeight="Bold" FontSize="13" />
                             </Border>
                             <Border Background="#2A2A2A" CornerRadius="6" Padding="10,6" Margin="0,0,8,8">
@@ -151,7 +151,7 @@
 
                         <!-- Like Button -->
                         <Button x:Name="BtnQuickLike" Grid.Column="5" 
-                                Content="❤️ Like (L)" 
+                                Content="{Binding CurrentReel.ReelLikeButtonText, FallbackValue='🤍 Like (L)'}" 
                                 Click="BtnLike_Click"
                                 Background="#2A2A2A" Foreground="White" 
                                 Padding="12,8"
@@ -170,14 +170,10 @@
                     <!-- Like and Comments Buttons -->
                     <UniformGrid Columns="2" Margin="0,0,0,16">
                         <Button x:Name="BtnLike" Click="BtnLike_Click" 
+                                Content="{Binding CurrentReel.ReelLikeButtonText, FallbackValue='🤍 Like (L)'}"
                                 Background="#2A2A2A" Foreground="White" Padding="12" Margin="0,0,5,0"
                                 AutomationProperties.Name="Like this reel. Press L."
-                                AutomationProperties.HelpText="Toggles like status.">
-                            <StackPanel Orientation="Horizontal">
-                                <TextBlock Text="❤️ Like (L): " FontWeight="Bold" />
-                                <TextBlock Text="{Binding CurrentReel.FormattedLikes}" />
-                            </StackPanel>
-                        </Button>
+                                AutomationProperties.HelpText="Toggles like status." />
 
                         <Button x:Name="BtnComments" Click="BtnComments_Click" 
                                 Background="#2A2A2A" Foreground="White" Padding="12" Margin="5,0,0,0"

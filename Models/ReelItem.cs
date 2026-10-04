@@ -59,6 +59,9 @@ public class ReelItem : INotifyPropertyChanged
                 OnPropertyChanged();
                 OnPropertyChanged(nameof(FormattedLikes));
                 OnPropertyChanged(nameof(AccessibleDescription));
+                OnPropertyChanged(nameof(LikesDisplayText));
+                OnPropertyChanged(nameof(FormattedLikesBadge));
+                OnPropertyChanged(nameof(ReelLikeButtonText));
             }
         }
     }
@@ -73,6 +76,7 @@ public class ReelItem : INotifyPropertyChanged
                 _isLiked = value;
                 OnPropertyChanged();
                 OnPropertyChanged(nameof(AccessibleDescription));
+                OnPropertyChanged(nameof(ReelLikeButtonText));
             }
         }
     }
@@ -88,7 +92,9 @@ public class ReelItem : INotifyPropertyChanged
                 return $"{(LikesCount / 1_000_000.0):0.#}M";
             if (LikesCount >= 1_000)
                 return $"{(LikesCount / 1_000.0):0.#}K";
-            return LikesCount.ToString();
+            if (LikesCount > 0)
+                return LikesCount.ToString();
+            return string.Empty;
         }
         set
         {
@@ -97,9 +103,22 @@ public class ReelItem : INotifyPropertyChanged
                 _formattedLikesOverride = value;
                 OnPropertyChanged();
                 OnPropertyChanged(nameof(AccessibleDescription));
+                OnPropertyChanged(nameof(LikesDisplayText));
+                OnPropertyChanged(nameof(FormattedLikesBadge));
+                OnPropertyChanged(nameof(ReelLikeButtonText));
             }
         }
     }
+
+    public string LikesDisplayText =>
+        !string.IsNullOrWhiteSpace(FormattedLikes) ? $"❤️ {FormattedLikes} Likes" : "❤️ Likes";
+
+    public string FormattedLikesBadge =>
+        !string.IsNullOrWhiteSpace(FormattedLikes) ? $": {FormattedLikes}" : string.Empty;
+
+    public string ReelLikeButtonText => IsLiked
+        ? (!string.IsNullOrWhiteSpace(FormattedLikes) ? $"❤️ Liked ({FormattedLikes})" : "❤️ Liked (L)")
+        : (!string.IsNullOrWhiteSpace(FormattedLikes) ? $"🤍 Like ({FormattedLikes})" : "🤍 Like (L)");
 
     public ObservableCollection<InstagramComment> Comments { get; set; } = new();
 
@@ -109,7 +128,8 @@ public class ReelItem : INotifyPropertyChanged
         {
             var likeStatus = IsLiked ? "Liked" : "Not liked";
             var cleanCaption = string.IsNullOrWhiteSpace(Caption) ? "No caption" : Caption.Replace("\n", " ");
-            return $"Reel by {Username}. Caption: {cleanCaption}. Audio: {AudioTitle}. {FormattedLikes} likes, {CommentsCount} comments. Status: {likeStatus}. Press Space to play or pause, M to mute, L to like, C for comments.";
+            var likesPart = !string.IsNullOrWhiteSpace(FormattedLikes) ? $"{FormattedLikes} likes, " : "";
+            return $"Reel by {Username}. Caption: {cleanCaption}. Audio: {AudioTitle}. {likesPart}{CommentsCount} comments. Status: {likeStatus}. Press Space to play or pause, M to mute, L to like, C for comments.";
         }
     }
 

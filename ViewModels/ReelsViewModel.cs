@@ -177,6 +177,14 @@ public class ReelsViewModel : INotifyPropertyChanged
         if (CurrentReel != null)
         {
             CurrentReel.IsLiked = !CurrentReel.IsLiked;
+            if (CurrentReel.IsLiked)
+            {
+                CurrentReel.LikesCount++;
+            }
+            else if (CurrentReel.LikesCount > 0)
+            {
+                CurrentReel.LikesCount--;
+            }
             AccessibilityHelper.Announce(CurrentReel.IsLiked ? "Liked reel" : "Unliked reel");
         }
         _ = InstagramBridgeService.Instance.ToggleLikeAsync();

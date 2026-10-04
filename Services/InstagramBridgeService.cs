@@ -41,6 +41,121 @@ public class InstagramBridgeService
             } catch(e) {}
         }
 
+        function triggerClick(el) {
+            if (!el) return;
+            try {
+                el.focus();
+                const opts = { bubbles: true, cancelable: true, view: window };
+                el.dispatchEvent(new PointerEvent('pointerdown', opts));
+                el.dispatchEvent(new MouseEvent('mousedown', opts));
+                el.dispatchEvent(new PointerEvent('pointerup', opts));
+                el.dispatchEvent(new MouseEvent('mouseup', opts));
+                el.click();
+            } catch(e) {
+                try { el.click(); } catch(e2) {}
+            }
+        }
+
+        function triggerDoubleTap(el) {
+            if (!el) return;
+            try {
+                const rect = el.getBoundingClientRect();
+                const clientX = rect.left + rect.width / 2;
+                const clientY = rect.top + rect.height / 2;
+                const opts = { bubbles: true, cancelable: true, view: window, clientX: clientX, clientY: clientY };
+                el.dispatchEvent(new MouseEvent('dblclick', opts));
+            } catch(e) {}
+        }
+
+        function findReelLikeButton(root) {
+            if (!root) root = document;
+            const btns = Array.from(root.querySelectorAll('button, div[role=""button""], [role=""button""]'));
+            for (const b of btns) {
+                const aria = (b.getAttribute('aria-label') || '').trim().toLowerCase();
+                if (aria === 'like' || aria === 'unlike' || aria.startsWith('like') || aria.startsWith('unlike')) {
+                    return b;
+                }
+            }
+
+            const svgs = Array.from(root.querySelectorAll('svg'));
+            for (const s of svgs) {
+                const aria = (s.getAttribute('aria-label') || '').trim().toLowerCase();
+                const titleEl = s.querySelector('title');
+                const title = (titleEl ? titleEl.textContent || '' : '').trim().toLowerCase();
+                if (aria === 'like' || aria === 'unlike' || title === 'like' || title === 'unlike' ||
+                    aria.startsWith('like') || aria.startsWith('unlike')) {
+                    return s.closest('button, div[role=""button""], [role=""button""]') || s.parentElement;
+                }
+            }
+
+            for (const s of svgs) {
+                const paths = Array.from(s.querySelectorAll('path'));
+                for (const p of paths) {
+                    const d = p.getAttribute('d') || '';
+                    if (d.includes('34.6 3.1') || d.includes('16.792 3.904') || d.includes('1.246 7.414') || d.includes('20.84 4.61') || d.includes('21.35')) {
+                        return s.closest('button, div[role=""button""], [role=""button""]') || s.parentElement;
+                    }
+                }
+            }
+
+            const commentBtn = root.querySelector('button[aria-label*=""Comment"" i], div[role=""button""][aria-label*=""Comment"" i], svg[aria-label*=""Comment"" i]');
+            if (commentBtn) {
+                const realCommentBtn = commentBtn.closest('button, div[role=""button""], [role=""button""]') || commentBtn;
+                let bar = realCommentBtn.parentElement;
+                for (let k = 0; k < 3 && bar && bar !== document.body; k++) {
+                    const barBtns = Array.from(bar.querySelectorAll('button, div[role=""button""]'));
+                    const idx = barBtns.indexOf(realCommentBtn);
+                    if (idx > 0) return barBtns[idx - 1];
+                    bar = bar.parentElement;
+                }
+            }
+            return null;
+        }
+
+        function findReelCommentButton(root) {
+            if (!root) root = document;
+            const btns = Array.from(root.querySelectorAll('button, div[role=""button""], [role=""button""]'));
+            for (const b of btns) {
+                const aria = (b.getAttribute('aria-label') || '').trim().toLowerCase();
+                if (aria === 'comment' || aria === 'comments' || aria.startsWith('comment')) return b;
+            }
+            const svgs = Array.from(root.querySelectorAll('svg'));
+            for (const s of svgs) {
+                const aria = (s.getAttribute('aria-label') || '').trim().toLowerCase();
+                const titleEl = s.querySelector('title');
+                const title = (titleEl ? titleEl.textContent || '' : '').trim().toLowerCase();
+                if (aria.includes('comment') || title.includes('comment')) {
+                    return s.closest('button, div[role=""button""], [role=""button""]') || s.parentElement;
+                }
+            }
+            return null;
+        }
+
+        function checkIsLiked(btn) {
+            if (!btn) return false;
+            const btnAria = (btn.getAttribute('aria-label') || '').toLowerCase();
+            if (btnAria.includes('unlike') || btnAria.includes('liked')) return true;
+
+            const svg = btn.querySelector('svg') || (btn.tagName && btn.tagName.toLowerCase() === 'svg' ? btn : null);
+            if (svg) {
+                const svgAria = (svg.getAttribute('aria-label') || '').toLowerCase();
+                if (svgAria.includes('unlike') || svgAria.includes('liked')) return true;
+
+                const fill = (svg.getAttribute('fill') || '').toLowerCase();
+                if (fill.includes('red') || fill.includes('rgb(255, 48, 64)') || fill.includes('ed4956') || fill.includes('ff3040')) return true;
+
+                const color = (svg.getAttribute('color') || svg.style.color || svg.style.fill || '').toLowerCase();
+                if (color.includes('red') || color.includes('rgb(255, 48, 64)') || color.includes('ed4956') || color.includes('ff3040')) return true;
+
+                const paths = Array.from(svg.querySelectorAll('path'));
+                for (const p of paths) {
+                    const pFill = (p.getAttribute('fill') || '').toLowerCase();
+                    if (pFill.includes('red') || pFill.includes('rgb(255, 48, 64)') || pFill.includes('ed4956') || pFill.includes('ff3040')) return true;
+                }
+            }
+            return false;
+        }
+
         function getActiveReel() {
             const videos = Array.from(document.querySelectorAll('video'));
             if (videos.length === 0) return null;
@@ -64,17 +179,23 @@ public class InstagramBridgeService
             if (!activeVideo) activeVideo = videos[0];
 
             let container = activeVideo.closest('article') ||
-                            activeVideo.closest('div[role=""dialog""]') ||
-                            activeVideo.closest('section');
+                            activeVideo.closest('div[role=""dialog""]');
             if (!container) {
                 let p = activeVideo.parentElement;
-                while (p && p !== document.body) {
-                    if (p.querySelector('svg[aria-label=""Like""], svg[aria-label=""Unlike""]')) {
-                        container = p;
-                        if (p.tagName === 'ARTICLE' || p.getAttribute('role') === 'dialog') break;
+                let candidate = null;
+                while (p && p !== document.body && p !== document.documentElement) {
+                    const hasAction = p.querySelector('button[aria-label*=""Like"" i], div[role=""button""][aria-label*=""Like"" i], svg[aria-label*=""Like"" i], [aria-label*=""Unlike"" i]');
+                    if (hasAction) {
+                        candidate = p;
+                        const r = p.getBoundingClientRect();
+                        if (r.height > 200 && r.height <= window.innerHeight * 1.5) {
+                            container = p;
+                            break;
+                        }
                     }
                     p = p.parentElement;
                 }
+                if (!container && candidate) container = candidate;
             }
             if (!container) container = activeVideo.parentElement || document.body;
             return { video: activeVideo, container: container };
@@ -139,48 +260,63 @@ public class InstagramBridgeService
                 // 2. Real Likes Count & Liked State
                 let likes = '';
                 let isLiked = false;
-                const likeSvg = container.querySelector('svg[aria-label=""Like""], svg[aria-label=""Unlike""]') ||
-                                document.querySelector('svg[aria-label=""Like""], svg[aria-label=""Unlike""]');
-                if (likeSvg) {
-                    const aria = likeSvg.getAttribute('aria-label') || '';
-                    const fill = likeSvg.getAttribute('fill') || '';
-                    isLiked = aria === 'Unlike' || fill === '#ed4956' || fill === 'rgb(255, 48, 64)';
+                const likeBtn = findReelLikeButton(container) || findReelLikeButton(document);
+                if (likeBtn) {
+                    isLiked = checkIsLiked(likeBtn);
 
-                    const btn = likeSvg.closest('button, div[role=""button""]') || likeSvg.parentElement;
-                    if (btn) {
-                        const btnAria = btn.getAttribute('aria-label') || '';
-                        if (btnAria.toLowerCase().includes('unlike')) isLiked = true;
-                        const matchAria = btnAria.match(/([0-9.,]+(\s*[KkMmBb])?)\s*likes?/i);
-                        if (matchAria && matchAria[1]) likes = matchAria[1].trim();
+                    // A. Check aria-label on the button itself e.g. 'Like, 12.4K people' or '12.4K likes'
+                    const btnAria = likeBtn.getAttribute('aria-label') || '';
+                    const matchAria = btnAria.match(/([0-9.,]+(\s*[KkMmBb])?)\s*(?:likes?|people|others)/i) ||
+                                      btnAria.match(/([0-9.,]+(\s*[KkMmBb]))/i);
+                    if (matchAria && matchAria[1]) {
+                        likes = matchAria[1].trim();
                     }
 
-                    if (!likes && btn) {
-                        const parent = btn.parentElement;
-                        if (parent) {
-                            const spans = Array.from(parent.querySelectorAll('span, div'));
-                            for (const s of spans) {
-                                const txt = (s.innerText || '').trim();
+                    // B. Check elements inside likeBtn
+                    if (!likes) {
+                        const inSpans = Array.from(likeBtn.querySelectorAll('span, div'));
+                        for (const s of inSpans) {
+                            const txt = (s.innerText || '').trim();
+                            if (txt && /^[0-9.,]+[KkMmBb]?$/.test(txt)) {
+                                likes = txt;
+                                break;
+                            }
+                        }
+                    }
+
+                    // C. Check wrapper/parent around likeBtn (action item column cell)
+                    if (!likes) {
+                        const wrappers = [likeBtn.parentElement, likeBtn.parentElement?.parentElement];
+                        for (const wrap of wrappers) {
+                            if (!wrap) continue;
+                            const wrapItems = Array.from(wrap.querySelectorAll('span, div, button'));
+                            for (const item of wrapItems) {
+                                if (item === likeBtn || likeBtn.contains(item)) continue;
+                                const txt = (item.innerText || '').trim();
                                 if (txt && /^[0-9.,]+[KkMmBb]?$/.test(txt)) {
                                     likes = txt;
                                     break;
                                 }
-                                const m = txt.match(/([0-9.,]+[KkMmBb]?)\s*likes?/i);
+                                const m = txt.match(/([0-9.,]+[KkMmBb]?)\s*(?:likes?|others)/i);
                                 if (m && m[1]) {
-                                    likes = m[1];
+                                    likes = m[1].trim();
                                     break;
                                 }
                             }
+                            if (likes) break;
                         }
                     }
                 }
 
+                // D. Check entire container for text matching likes
                 if (!likes) {
-                    const allSpans = Array.from(container.querySelectorAll('span, button'));
+                    const allSpans = Array.from(container.querySelectorAll('span, div, button'));
                     for (const s of allSpans) {
                         const txt = (s.innerText || '').trim();
-                        const m = txt.match(/([0-9.,]+[KkMmBb]?)\s+likes?$/i);
+                        const m = txt.match(/([0-9.,]+[KkMmBb]?)\s*(?:likes?|others)/i) ||
+                                  txt.match(/liked by\s+.*?([0-9.,]+[KkMmBb]?)/i);
                         if (m && m[1]) {
-                            likes = m[1];
+                            likes = m[1].trim();
                             break;
                         }
                     }
@@ -188,25 +324,57 @@ public class InstagramBridgeService
 
                 // 3. Comments Count
                 let commentsCount = '';
-                const cSvg = container.querySelector('svg[aria-label=""Comment""], svg[aria-label=""Comments""]') ||
-                             document.querySelector('svg[aria-label=""Comment""], svg[aria-label=""Comments""]');
-                if (cSvg) {
-                    const cBtn = cSvg.closest('button, div[role=""button""]') || cSvg.parentElement;
-                    if (cBtn) {
-                        const cAria = cBtn.getAttribute('aria-label') || '';
-                        const m = cAria.match(/([0-9.,]+(\s*[KkMmBb])?)\s*comments?/i);
-                        if (m && m[1]) commentsCount = m[1].trim();
-                        else if (cBtn.parentElement) {
-                            const spans = Array.from(cBtn.parentElement.querySelectorAll('span, div'));
-                            for (const s of spans) {
-                                const txt = (s.innerText || '').trim();
+                const commentBtn = findReelCommentButton(container) || findReelCommentButton(document);
+                if (commentBtn) {
+                    const cAria = commentBtn.getAttribute('aria-label') || '';
+                    const m = cAria.match(/([0-9.,]+(\s*[KkMmBb])?)\s*comments?/i);
+                    if (m && m[1]) commentsCount = m[1].trim();
+
+                    if (!commentsCount) {
+                        const wrappers = [commentBtn.parentElement, commentBtn.parentElement?.parentElement];
+                        for (const wrap of wrappers) {
+                            if (!wrap) continue;
+                            const wrapItems = Array.from(wrap.querySelectorAll('span, div'));
+                            for (const item of wrapItems) {
+                                if (item === commentBtn || commentBtn.contains(item)) continue;
+                                const txt = (item.innerText || '').trim();
                                 if (txt && /^[0-9.,]+[KkMmBb]?$/.test(txt)) {
                                     commentsCount = txt;
                                     break;
                                 }
                             }
+                            if (commentsCount) break;
                         }
                     }
+                }
+
+                // E. If likes or commentsCount still missing, extract numeric badges from action bar
+                if (!likes || !commentsCount) {
+                    const allBadges = [];
+                    const allEls = Array.from(container.querySelectorAll('span, div'));
+                    for (const el of allEls) {
+                        if (el.children.length > 0) continue;
+                        const txt = (el.innerText || '').trim();
+                        if (/^[0-9.,]+[KkMmBb]?$/.test(txt) && txt.length <= 10 && !txt.includes(':') && !txt.startsWith('#')) {
+                            allBadges.push(txt);
+                        }
+                    }
+                    if (!likes && allBadges.length > 0) {
+                        likes = allBadges[0];
+                    }
+                    if (!commentsCount && allBadges.length > 1) {
+                        commentsCount = allBadges[1];
+                    }
+                }
+
+                // Calculate numeric likesCount
+                let numericLikes = 0;
+                if (likes) {
+                    const clean = likes.replace(/,/g, '').trim().toUpperCase();
+                    if (clean.endsWith('K')) numericLikes = Math.round(parseFloat(clean) * 1000);
+                    else if (clean.endsWith('M')) numericLikes = Math.round(parseFloat(clean) * 1000000);
+                    else if (clean.endsWith('B')) numericLikes = Math.round(parseFloat(clean) * 1000000000);
+                    else numericLikes = parseInt(clean, 10) || 0;
                 }
 
                 // 4. Caption
@@ -232,6 +400,7 @@ public class InstagramBridgeService
                         caption: caption,
                         audioTitle: audio,
                         formattedLikes: likes,
+                        likesCount: numericLikes,
                         commentsCount: commentsCount,
                         isLiked: isLiked,
                         isPlaying: !v.paused,
@@ -319,29 +488,25 @@ public class InstagramBridgeService
                 const commentSection = document.querySelector('div[role=""dialog""]') ||
                                        document.querySelector('article') ||
                                        document;
-                const svgs = Array.from(commentSection.querySelectorAll('svg[aria-label=""Like""], svg[aria-label=""Unlike""]'));
-                for (const svg of svgs) {
-                    let p = svg.parentElement;
+                const candidates = Array.from(commentSection.querySelectorAll('svg[aria-label=""Like""], svg[aria-label=""Unlike""], button[aria-label*=""Like"" i], div[role=""button""][aria-label*=""Like"" i]'));
+                for (const item of candidates) {
+                    let p = item.parentElement;
                     for (let step = 0; step < 6 && p && p !== document.body; step++) {
                         const t = p.innerText || '';
                         if ((username && t.includes(username)) || (text && t.includes(text))) {
-                            const btn = svg.closest('button, div[role=""button""]') || svg.parentElement;
-                            if (btn) {
-                                btn.click();
-                                setTimeout(window.__winInstagram.scrapeComments, 300);
-                                return true;
-                            }
+                            const btn = item.closest('button, div[role=""button""]') || item;
+                            triggerClick(btn);
+                            setTimeout(() => window.__winInstagram.scrapeComments(), 300);
+                            return true;
                         }
                         p = p.parentElement;
                     }
                 }
-                if (typeof commentIndex === 'number' && commentIndex >= 0 && commentIndex < svgs.length) {
-                    const btn = svgs[commentIndex].closest('button, div[role=""button""]') || svgs[commentIndex].parentElement;
-                    if (btn) {
-                        btn.click();
-                        setTimeout(window.__winInstagram.scrapeComments, 300);
-                        return true;
-                    }
+                if (typeof commentIndex === 'number' && commentIndex >= 0 && commentIndex < candidates.length) {
+                    const btn = candidates[commentIndex].closest('button, div[role=""button""]') || candidates[commentIndex];
+                    triggerClick(btn);
+                    setTimeout(() => window.__winInstagram.scrapeComments(), 300);
+                    return true;
                 }
                 return false;
             } catch(e) { return false; }
@@ -457,17 +622,19 @@ public class InstagramBridgeService
             try {
                 const info = getActiveReel();
                 const root = info?.container || document;
-                const likeSvg = root.querySelector('svg[aria-label=""Like""], svg[aria-label=""Unlike""]');
-                if (likeSvg) {
-                    const btn = likeSvg.closest('button, div[role=""button""]') || likeSvg.parentElement;
-                    if (btn) {
-                        btn.click();
-                        setTimeout(syncState, 200);
-                        return true;
-                    }
+                const btn = findReelLikeButton(root) || findReelLikeButton(document);
+                if (btn) {
+                    triggerClick(btn);
+                    setTimeout(syncState, 150);
+                    setTimeout(syncState, 500);
+                    return true;
+                }
+                if (info && info.video) {
+                    triggerDoubleTap(info.video);
                 }
                 dispatchKey('l', 'KeyL', 76);
-                setTimeout(syncState, 200);
+                setTimeout(syncState, 150);
+                setTimeout(syncState, 500);
                 return true;
             } catch(e) { return false; }
         };
@@ -476,22 +643,19 @@ public class InstagramBridgeService
             try {
                 const info = getActiveReel();
                 const root = info?.container || document;
-                const commentSvg = root.querySelector('svg[aria-label=""Comment""], svg[aria-label=""Comments""]') ||
-                                   document.querySelector('svg[aria-label=""Comment""], svg[aria-label=""Comments""]');
-                if (commentSvg) {
-                    const btn = commentSvg.closest('button, div[role=""button""]') || commentSvg.parentElement;
-                    if (btn) {
-                        btn.click();
-                        setTimeout(() => {
-                            window.__winInstagram.scrapeComments();
-                        }, 500);
-                        setTimeout(() => {
-                            window.__winInstagram.scrapeComments();
-                        }, 1200);
-                        return true;
-                    }
+                const btn = findReelCommentButton(root) || findReelCommentButton(document);
+                if (btn) {
+                    triggerClick(btn);
+                    setTimeout(() => {
+                        window.__winInstagram.scrapeComments();
+                    }, 500);
+                    setTimeout(() => {
+                        window.__winInstagram.scrapeComments();
+                    }, 1200);
+                    return true;
                 }
-                return false;
+                dispatchKey('c', 'KeyC', 67);
+                return true;
             } catch(e) { return false; }
         };
 
@@ -631,12 +795,20 @@ public class InstagramBridgeService
                             else if (ccProp.ValueKind == JsonValueKind.String && long.TryParse(ccProp.GetString(), out var parsedC)) cCount = parsedC;
                         }
 
+                        long lCount = 0;
+                        if (data.TryGetProperty("likesCount", out var lkcProp))
+                        {
+                            if (lkcProp.ValueKind == JsonValueKind.Number) lCount = lkcProp.GetInt64();
+                            else if (lkcProp.ValueKind == JsonValueKind.String && long.TryParse(lkcProp.GetString(), out var parsedL)) lCount = parsedL;
+                        }
+
                         var reel = new ReelItem
                         {
                             Id = data.TryGetProperty("id", out var idProp) ? idProp.GetString() ?? "" : "",
                             Username = data.TryGetProperty("username", out var uProp) ? uProp.GetString() ?? "" : "Instagram User",
                             Caption = data.TryGetProperty("caption", out var cProp) ? cProp.GetString() ?? "" : "",
                             AudioTitle = data.TryGetProperty("audioTitle", out var aProp) ? aProp.GetString() ?? "" : "Original Audio",
+                            LikesCount = lCount,
                             FormattedLikes = data.TryGetProperty("formattedLikes", out var lProp) ? lProp.GetString() ?? "" : "",
                             CommentsCount = cCount,
                             IsLiked = data.TryGetProperty("isLiked", out var likedProp) && likedProp.GetBoolean(),

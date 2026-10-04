@@ -61,9 +61,7 @@ public partial class MainWindow : Window
                 _activeReel = reel;
 
                 var likesInfo = !string.IsNullOrWhiteSpace(reel.FormattedLikes) ? $" • ❤️ {reel.FormattedLikes} likes" : "";
-                var likeBtnLabel = reel.IsLiked
-                    ? (!string.IsNullOrWhiteSpace(reel.FormattedLikes) ? $"❤️ Liked ({reel.FormattedLikes})" : "❤️ Liked (L)")
-                    : (!string.IsNullOrWhiteSpace(reel.FormattedLikes) ? $"🤍 Like ({reel.FormattedLikes})" : "🤍 Like (L)");
+                var likeBtnLabel = reel.ReelLikeButtonText;
 
                 var captionSnippet = !string.IsNullOrWhiteSpace(reel.Caption) ? $" • {reel.Caption}" : "";
                 TxtFooterStatus.Text = $"@{reel.Username}{likesInfo}{captionSnippet}";
@@ -73,9 +71,10 @@ public partial class MainWindow : Window
                 BtnMuteReel.Content = isMuted ? "🔇 Unmute (M)" : "🔊 Mute (M)";
                 BtnLikeReel.Content = likeBtnLabel;
 
+                var likePart = !string.IsNullOrWhiteSpace(reel.FormattedLikes) ? $"{reel.FormattedLikes} likes. " : "";
                 var likeAnnounce = reel.IsLiked
-                    ? $"Liked reel by {reel.Username}. {reel.FormattedLikes} likes. Press L to unlike."
-                    : $"Like reel by {reel.Username}. {reel.FormattedLikes} likes. Press L to like.";
+                    ? $"Liked reel by {reel.Username}. {likePart}Press L to unlike."
+                    : $"Like reel by {reel.Username}. {likePart}Press L to like.";
                 System.Windows.Automation.AutomationProperties.SetName(BtnLikeReel, likeAnnounce);
 
                 if (isNew)
@@ -243,8 +242,27 @@ public partial class MainWindow : Window
     private void BtnPlayPauseReel_Click(object sender, RoutedEventArgs e) => _ = InstagramBridgeService.Instance.TogglePlayAsync();
     private void BtnNextReel_Click(object sender, RoutedEventArgs e) => _ = InstagramBridgeService.Instance.NextReelAsync();
     private void BtnMuteReel_Click(object sender, RoutedEventArgs e) => _ = InstagramBridgeService.Instance.ToggleMuteAsync();
-    private void BtnLikeReel_Click(object sender, RoutedEventArgs e) => _ = InstagramBridgeService.Instance.ToggleLikeAsync();
+    private void BtnLikeReel_Click(object sender, RoutedEventArgs e) => ToggleActiveReelLike();
     private void BtnCommentsReel_Click(object sender, RoutedEventArgs e) => ToggleCommentsDrawer();
+
+    private void ToggleActiveReelLike()
+    {
+        if (_activeReel != null)
+        {
+            _activeReel.IsLiked = !_activeReel.IsLiked;
+            if (_activeReel.IsLiked) _activeReel.LikesCount++;
+            else if (_activeReel.LikesCount > 0) _activeReel.LikesCount--;
+
+            BtnLikeReel.Content = _activeReel.ReelLikeButtonText;
+            var likePart = !string.IsNullOrWhiteSpace(_activeReel.FormattedLikes) ? $"{_activeReel.FormattedLikes} likes. " : "";
+            var likeAnnounce = _activeReel.IsLiked
+                ? $"Liked reel by {_activeReel.Username}. {likePart}Press L to unlike."
+                : $"Like reel by {_activeReel.Username}. {likePart}Press L to like.";
+            System.Windows.Automation.AutomationProperties.SetName(BtnLikeReel, likeAnnounce);
+            AccessibilityHelper.Announce(_activeReel.IsLiked ? "Liked reel" : "Unliked reel");
+        }
+        _ = InstagramBridgeService.Instance.ToggleLikeAsync();
+    }
 
     private void ToggleCommentsDrawer()
     {
@@ -471,7 +489,7 @@ public partial class MainWindow : Window
                     break;
 
                 case Key.L:
-                    _ = InstagramBridgeService.Instance.ToggleLikeAsync();
+                    ToggleActiveReelLike();
                     e.Handled = true;
                     break;
 
