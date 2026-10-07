@@ -20,6 +20,15 @@ public class ReelItem : INotifyPropertyChanged
     public string VideoUrl { get; set; } = string.Empty;
     public long CommentsCount { get; set; }
 
+    /// <summary>Instagram's own alt text for the reel's poster image, when present.</summary>
+    public string AltText { get; set; } = string.Empty;
+
+    /// <summary>True once a caption track has been found for the current reel.</summary>
+    public bool HasCaptions { get; set; }
+
+    /// <summary>Transcript read from the video's caption track, when one exists.</summary>
+    public string CaptionsText { get; set; } = string.Empty;
+
     public string Caption
     {
         get => _caption;
@@ -129,7 +138,10 @@ public class ReelItem : INotifyPropertyChanged
             var likeStatus = IsLiked ? "Liked" : "Not liked";
             var cleanCaption = string.IsNullOrWhiteSpace(Caption) ? "No caption" : Caption.Replace("\n", " ");
             var likesPart = !string.IsNullOrWhiteSpace(FormattedLikes) ? $"{FormattedLikes} likes, " : "";
-            return $"Reel by {Username}. Caption: {cleanCaption}. Audio: {AudioTitle}. {likesPart}{CommentsCount} comments. Status: {likeStatus}. Press Space to play or pause, M to mute, L to like, C for comments.";
+            var baseText = $"Reel by {Username}. Caption: {cleanCaption}. Audio: {AudioTitle}. {likesPart}{CommentsCount} comments. Status: {likeStatus}.";
+            var altPart = !string.IsNullOrWhiteSpace(AltText) ? $" Visual description: {AltText}." : string.Empty;
+            var captionPart = HasCaptions ? " Captions are available; press T to read them." : string.Empty;
+            return baseText + altPart + captionPart + " Press Space to play or pause, M to mute, L to like, C for comments.";
         }
     }
 

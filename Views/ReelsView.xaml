@@ -14,6 +14,7 @@
             <RowDefinition Height="Auto" />
             <RowDefinition Height="Auto" />
             <RowDefinition Height="*" />
+            <RowDefinition Height="Auto" />
         </Grid.RowDefinitions>
 
         <!-- Now playing -->
@@ -48,6 +49,23 @@
                 <TextBlock Text="{Binding CurrentReelCaption}" Foreground="#E0E0E0" FontSize="13"
                            TextWrapping="Wrap" MaxHeight="90" Margin="0,4,0,0"
                            AutomationProperties.Name="Reel caption" />
+
+                <!-- The only description of what the video shows, so it is always on screen. -->
+                <TextBlock Text="{Binding CurrentReelAltText}" Foreground="#9CDCFE" FontSize="12"
+                           TextWrapping="Wrap" MaxHeight="70" Margin="0,6,0,0"
+                           AutomationProperties.Name="Image description" />
+
+                <!-- Captions, read from the video's own caption track, shown once they were read out. -->
+                <Border Background="#141414" BorderBrush="#2D2D30" BorderThickness="1" CornerRadius="6"
+                        Padding="10,8" Margin="0,8,0,0"
+                        Visibility="{Binding HasCaptionsText, Converter={StaticResource BooleanToVisibilityConverter}}">
+                    <StackPanel>
+                        <TextBlock Text="🎧 Captions (T)" Foreground="#4EC9B0" FontSize="12" FontWeight="Bold" />
+                        <TextBlock Text="{Binding CaptionsText}" Foreground="#D0D0D0" FontSize="12"
+                                   TextWrapping="Wrap" MaxHeight="120" Margin="0,4,0,0"
+                                   AutomationProperties.Name="Video captions" />
+                    </StackPanel>
+                </Border>
             </StackPanel>
         </Border>
 
@@ -80,6 +98,18 @@
                     <Button x:Name="BtnComments" Content="💬 (C)" Click="Comments_Click"
                             Background="#2A2A2A" Foreground="White" Padding="8,8" Margin="4,0,0,0"
                             AutomationProperties.Name="Open the accessible comments list. Press C." />
+                </UniformGrid>
+
+                <UniformGrid Columns="3" Margin="0,6,0,0">
+                    <Button x:Name="BtnCaptions" Content="🎧 Captions (T)" Click="Captions_Click"
+                            Background="#2A2A2A" Foreground="White" Padding="8,8" Margin="0,0,4,0"
+                            AutomationProperties.Name="Read out the captions of this video. Press T." />
+                    <Button x:Name="BtnDescribe" Content="🔎 Describe (D)" Click="Describe_Click"
+                            Background="#2A2A2A" Foreground="White" Padding="8,8" Margin="2,0,2,0"
+                            AutomationProperties.Name="Read out a description of what is on screen. Press D." />
+                    <Button x:Name="BtnSave" Content="💾 Save (Ctrl+S)" Click="Save_Click"
+                            Background="#2A2A2A" Foreground="White" Padding="8,8" Margin="4,0,0,0"
+                            AutomationProperties.Name="Save this media and its description to disk. Press Control S." />
                 </UniformGrid>
             </StackPanel>
         </Border>
@@ -135,5 +165,11 @@
                 </ListBox.ItemTemplate>
             </ListBox>
         </Grid>
+
+        <!-- Shortcut hint -->
+        <Border Grid.Row="4" Background="#1A1A1A" Padding="12,6">
+            <TextBlock Text="J / K or Down / Up: change reel  •  Space: play or pause  •  M: mute  •  L: like  •  C: comments  •  T: captions  •  D: describe  •  S: share  •  Ctrl+S: save  •  Enter: open a watched reel"
+                       Foreground="#666666" FontSize="11" TextWrapping="Wrap" />
+        </Border>
     </Grid>
 </UserControl>

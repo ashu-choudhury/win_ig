@@ -45,10 +45,56 @@ public class ReelsViewModel : INotifyPropertyChanged
             OnPropertyChanged(nameof(CurrentReelLikesText));
             OnPropertyChanged(nameof(CurrentReelCommentsText));
             OnPropertyChanged(nameof(CurrentReelCaption));
+            OnPropertyChanged(nameof(CurrentReelAltText));
+            OnPropertyChanged(nameof(HasCurrentReelAltText));
+            OnPropertyChanged(nameof(HasCaptions));
         }
     }
 
     public bool HasCurrentReel => _currentReel != null;
+
+    /// <summary>
+    /// Instagram's own description of the reel's image, which is the only text equivalent a blind
+    /// user has for the visual itself. Stated explicitly when absent, so silence is never mistaken
+    /// for "nothing to describe".
+    /// </summary>
+    public string CurrentReelAltText => CurrentReel == null || string.IsNullOrWhiteSpace(CurrentReel.AltText)
+        ? "Instagram provided no image description for this reel."
+        : CurrentReel.AltText;
+
+    public bool HasCurrentReelAltText => CurrentReel != null && !string.IsNullOrWhiteSpace(CurrentReel.AltText);
+
+    /// <summary>True once a caption track has been found for the reel currently playing.</summary>
+    public bool HasCaptions => CurrentReel != null && CurrentReel.HasCaptions;
+
+    private string _captionsText = string.Empty;
+
+    /// <summary>The transcript read from the video's caption track, shown once the user asks for it.</summary>
+    public string CaptionsText
+    {
+        get => _captionsText;
+        set
+        {
+            if (_captionsText == value) return;
+            _captionsText = value;
+            OnPropertyChanged();
+            OnPropertyChanged(nameof(HasCaptionsText));
+        }
+    }
+
+    public bool HasCaptionsText => !string.IsNullOrWhiteSpace(_captionsText);
+
+    /// <summary>Called by the shell once captions have actually been read from the page.</summary>
+    public void ShowCaptions(string text)
+    {
+        CaptionsText = text;
+        if (CurrentReel != null)
+        {
+            CurrentReel.CaptionsText = text;
+            CurrentReel.HasCaptions = true;
+        }
+        OnPropertyChanged(nameof(HasCaptions));
+    }
 
     /// <summary>
     /// The history entry the user has arrowed to. Its full description is exposed as the list
@@ -106,7 +152,7 @@ public class ReelsViewModel : INotifyPropertyChanged
             OnPropertyChanged();
             OnPropertyChanged(nameof(VolumeText));
             _ = InstagramBridgeService.Instance.SetVolumeAsync(_volume);
-            if (_isActive) AccessibilityHelper.Announce($"Volume {(int)(_volume * 100)} percent");
+            if (_isActive) Announcements.Detail($"Volume {(int)(_volume * 100)} percent");
         }
     }
 

@@ -20,6 +20,27 @@ public class FeedPost : INotifyPropertyChanged
     public string Timestamp { get; set; } = string.Empty;
     public long CommentsCount { get; set; }
 
+    /// <summary>Instagram's own alt text for this image, when the author supplied one.</summary>
+    public string AltText { get; set; } = string.Empty;
+
+    /// <summary>Number of slides when this post is a carousel.</summary>
+    public int CarouselCount { get; set; }
+
+    public bool IsCarousel => CarouselCount > 1;
+
+    public bool HasAltText => !string.IsNullOrWhiteSpace(AltText);
+
+    /// <summary>Spoken form of the alt text, or empty when there is none.</summary>
+    public string AltTextLine => string.IsNullOrWhiteSpace(AltText)
+        ? string.Empty
+        : $"Image description: {AltText}";
+
+    public string CarouselLine => IsCarousel ? $"Carousel with {CarouselCount} items" : string.Empty;
+
+    public string AltTextDisplay => string.IsNullOrWhiteSpace(AltText)
+        ? "No image description provided"
+        : AltText;
+
     public long LikesCount
     {
         get => _likesCount;
@@ -75,10 +96,22 @@ public class FeedPost : INotifyPropertyChanged
     {
         get
         {
-            var typeStr = IsVideo ? "Video post" : "Photo post";
+            var typeStr = IsCarousel ? $"Carousel of {CarouselCount}" : IsVideo ? "Video post" : "Photo post";
             var likeStatus = IsLiked ? "Liked" : "Not liked";
             var cleanCaption = string.IsNullOrWhiteSpace(Caption) ? "No caption" : Caption.Replace("\n", " ");
-            return $"{typeStr} by {Username}. Posted {Timestamp}. Caption: {cleanCaption}. {FormattedLikes} likes, {CommentsCount} comments. Status: {likeStatus}.";
+            var parts = new List<string>
+            {
+                $"{typeStr} by {Username}",
+                $"Posted {Timestamp}",
+                $"Caption: {cleanCaption}"
+            };
+
+            // Alt text is the only description of the image itself, so it is always read out.
+            if (!string.IsNullOrWhiteSpace(AltText)) parts.Add(AltTextLine);
+
+            parts.Add($"{FormattedLikes} likes, {CommentsCount} comments");
+            parts.Add($"Status: {likeStatus}");
+            return string.Join(". ", parts) + ".";
         }
     }
 

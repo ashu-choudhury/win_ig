@@ -87,8 +87,24 @@ public class HomeViewModel : INotifyPropertyChanged
 
         if (added > 0)
         {
-            AnnounceIfActive($"Feed updated. {added} new post{(added == 1 ? "" : "s")}. {Posts.Count} posts available.");
+            AnnounceIfActiveDetail($"Feed updated. {added} new post{(added == 1 ? "" : "s")}. {Posts.Count} posts available.");
         }
+    }
+
+    /// <summary>
+    /// Selects the remembered post so the user picks up where they left off. Returns false while
+    /// that post has not arrived yet, because the timeline fills in batches.
+    /// </summary>
+    public bool RestoreTo(string? postId, string? mediaCode)
+    {
+        var match = Posts.FirstOrDefault(p =>
+            (!string.IsNullOrWhiteSpace(mediaCode) && p.MediaCode == mediaCode) ||
+            (!string.IsNullOrWhiteSpace(postId) && p.Id == postId));
+
+        if (match == null) return false;
+
+        SelectedPost = match;
+        return true;
     }
 
     /// <summary>Opens the selected post's permalink in the engine.</summary>
@@ -152,9 +168,47 @@ public class HomeViewModel : INotifyPropertyChanged
         AnnounceIfActive(Status);
     }
 
+    /// <summary>
+    /// Steps a carousel one slide in the post open in the engine and reports the slide it actually
+    /// landed on, including that slide's alt text, instead of assuming the step worked.
+    /// </summary>
+    public async Task StepCarouselAsync(int direction)
+    {
+        if (SelectedPost == null)
+        {
+            AnnounceIfActive("No post selected.");
+            return;
+        }
+
+        if (!SelectedPost.IsCarousel)
+        {
+            AnnounceIfActive($"This post is not a carousel. It has {Math.Max(1, SelectedPost.CarouselCount)} item.");
+            return;
+        }
+
+        var result = await InstagramBridgeService.Instance.StepCarouselAsync(direction);
+        if (!result.Ok)
+        {
+            AnnounceIfActive("No carousel is open in the web view. Press Enter on this post first, then use Left and Right to move through its images.");
+            return;
+        }
+
+        var position = result.Count > 0 ? $"Image {result.Index} of {result.Count}" : "Image changed";
+        var altPart = string.IsNullOrWhiteSpace(result.AltText) ? " No image description provided." : $" {result.AltText}";
+        Status = position + "." + altPart;
+        AnnounceIfActive(Status);
+    }
+
+    /// <summary>Only the outcome of a deliberate action: always spoken while the panel is shown.</summary>
     private void AnnounceIfActive(string message)
     {
-        if (_isActive) AccessibilityHelper.Announce(message);
+        if (_isActive) Announcements.Say(message);
+    }
+
+    /// <summary>Useful context rather than a result, so it follows the verbosity setting.</summary>
+    private void AnnounceIfActiveDetail(string message)
+    {
+        if (_isActive) Announcements.Detail(message);
     }
 
     public event PropertyChangedEventHandler? PropertyChanged;

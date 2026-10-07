@@ -16,7 +16,21 @@ WinInstagram eliminates the severe accessibility bottlenecks, keyboard focus tra
 
 ## ✨ Key Features
 
-- **🗂 Native Accessible Panels:** Your feed, reels and direct messages are presented as **real Windows list controls**, not scraped web pages. Each item exposes a complete accessible name, so screen readers read the creator, caption, like count and timestamp as you arrow through the list. Press <kbd>F6</kbd> to collapse the panel for a full-width web view.
+- **🗂 Native Accessible Panels:** Feed, reels, direct messages, stories, profiles, search, saved posts and activity are presented as **real Windows list controls**, not scraped web pages. Each item exposes a complete accessible name, so screen readers read the creator, caption, like count and timestamp as you arrow through the list. Press <kbd>F6</kbd> to collapse the panel for a full-width web view.
+- **📖 Pausable Stories Navigator:** Stories normally advance on Instagram's own timer, which is hostile when you cannot see where you are. The stories panel lists every tray entry as text and lets you hold playback still, step one story at a time, and hear which story is showing.
+- **🖼 Image Descriptions Are Always Read:** Instagram's own alt text (`accessibility_caption`) is extracted for posts, reels and stories and included in every accessible name. When a creator supplied none, WinInstagram says so instead of staying silent.
+- **🎧 Video Captions (WebVTT):** Press <kbd>T</kbd> in Reels to read the video's own caption track as a transcript. If the creator never uploaded captions, WinInstagram says that too.
+- **🔄 Multi-Image Carousel Navigation:** Posts flagged as carousels report how many slides they have, and <kbd>Left</kbd> / <kbd>Right</kbd> step through them, announcing the slide number you actually landed on plus that slide's description.
+- **🧭 Reading-Position Memory:** WinInstagram remembers the post you were reading, the reel you were watching and the conversation you had open, and restores them next launch.
+- **🔐 Verify Before You Announce:** Every action that changes state asks Instagram first and reports the real outcome. When a control cannot be found on the page, WinInstagram says which one is missing rather than failing silently.
+- **📣 New-Activity Notifications:** Kinds of activity that would otherwise be a wall of avatars arrive as sentences, and new activity is announced while you work elsewhere.
+- **⌘ Command Palette (<kbd>Ctrl</kbd> + <kbd>K</kbd>):** Every native feature in one searchable list, with the shortcut currently bound to it shown beside each row.
+- **⌨️ Remappable Shortcuts:** Rebind any action, or switch to a screen-reader-friendly preset that moves every plain letter onto <kbd>Ctrl</kbd> and <kbd>Shift</kbd> combinations so your screen reader keeps its own keys.
+- **🔊 Announcement Verbosity Profiles:** Choose Terse, Standard or Verbose to control how much WinInstagram volunteers as you move.
+- **🔖 Saved Posts & Collections:** Your saved posts and any collections Instagram reports, as a readable list with counts.
+- **🔎 Native Profile Viewer & Search:** Read a profile as text (bio, counts, account type, recent posts) and search accounts, hashtags and posts without reading the web page.
+- **💾 Save Media To Disk:** Save the current image or video together with a text file carrying the caption, the image description and the permalink, so the saved copy still means something later.
+- **🔗 Rich Share Copy:** Sharing puts `caption — @creator — link` on the clipboard, not a bare URL.
 - **📥 Real Direct Messages:** Conversations and their messages come from Instagram's own `direct_v2` payloads, with unread counts, group threads and correct "You said" / "<sender> said" attribution. Reply without ever touching the web view.
 - **✅ Truthful State:** Likes are performed through Instagram's authenticated endpoint and the result is confirmed before anything is announced. If Instagram rejects the change, WinInstagram says so instead of silently pretending it worked.
 - **🔊 Deterministic Unmuted Audio:** Video and reels audio is unmuted and maintained by default. No random muting or volume drops when advancing between reels.
@@ -41,6 +55,10 @@ WinInstagram is deliberate about *when* it speaks, because saying the wrong thin
 - **Focus-driven reading uses UI Automation.** Every list item carries its full description as its accessible name, so arrowing through posts, conversations or reels is spoken by your screen reader natively. WinInstagram does not fire a competing announcement for the same thing.
 - **Live regions are reserved for events you cannot otherwise hear** — a feed refresh, incoming messages, an action's real outcome, or an error.
 - **A hidden panel never talks.** Only the visible view is "active"; background updates to a panel you are not looking at are silent.
+- **Speech has three levels, and you choose.** *Terse* says only what you did and what happened. *Standard* adds context such as like counts and audio titles. *Verbose* also reads captions, image descriptions and control diagnostics, and only Verbose volunteers the long text.
+- **Nothing is claimed that was not confirmed.** A like is announced as liked only after Instagram accepts it. A carousel step reports the slide it landed on. If a page control is missing, WinInstagram names the missing control instead of leaving you pressing a dead key.
+- **Your screen reader keeps its keys if you want them.** The default map uses plain letters (`J`, `K`, `L`, `M`, `C`, `S`, `R`, `T`, `D`, `P`). One switch moves every one of them behind <kbd>Ctrl</kbd> / <kbd>Shift</kbd>, so single-letter navigation in NVDA, JAWS or Narrator is never intercepted.
+- **Rebinding is honest about clashes.** Two actions may share a key when they belong to different surfaces that are never on screen together (J is both the next reel and the next story); anything that would genuinely collide is reported in Settings.
 
 ---
 
@@ -67,8 +85,31 @@ WinInstagram is deliberate about *when* it speaks, because saying the wrong thin
 | <kbd>R</kbd> *(Home / Messages)* | **Refresh** | Reloads the timeline or the inbox |
 | <kbd>Enter</kbd> *(Messages reply box)* | **Send** | Sends the typed direct message |
 | <kbd>+</kbd> / <kbd>-</kbd> | **Volume** | Adjusts engine volume |
+| <kbd>S</kbd> *(Home)* | **Share** | Copies `caption — @creator — link` to the clipboard |
+| <kbd>D</kbd> *(Home / Reels)* | **Describe** | Reads out the image description and caption of what is on screen |
+| <kbd>Left</kbd> / <kbd>Right</kbd> *(Home)* | **Carousel** | Steps through the slides of a carousel post |
+| <kbd>P</kbd> *(Stories)* | **Pause / Resume** | Holds story auto-advance still, or lets it continue |
+| <kbd>J</kbd> / <kbd>K</kbd> *(Stories)* | **Next / Previous story** | Steps one story at a time while paused |
+| <kbd>M</kbd> *(Activity)* | **Mark all read** | Clears the "new" badges |
 
 > **Note:** Arrow keys belong to whichever list has focus, so reading a list never accidentally scrolls the reels feed.
+
+### Command Palette
+
+| Shortcut | Action | Description |
+| :--- | :--- | :--- |
+| <kbd>Ctrl</kbd> + <kbd>K</kbd> | **Open the palette** | Lists every native command with the key bound to it |
+| typing | **Filter** | Narrows by name, description or group |
+| <kbd>Up</kbd> / <kbd>Down</kbd> | **Choose** | Moves the highlight |
+| <kbd>Enter</kbd> | **Run** | Runs the highlighted command |
+| <kbd>Escape</kbd> | **Close** | Returns to what you were doing |
+
+### Remapping And The Screen Reader Preset
+
+Settings ( <kbd>Ctrl</kbd> + <kbd>5</kbd> ) lists every action with the key currently bound to it. Press <kbd>Enter</kbd> on a row, then press the combination you want; <kbd>Escape</kbd> cancels. Two buttons do the bulk work:
+
+- **Use screen reader friendly keys** moves every plain letter onto a modified key, so NVDA, JAWS and Narrator keep single letters for themselves.
+- **Reset all shortcuts to defaults** restores the documented map.
 
 ### Reels Player Controls
 | Shortcut | Action | Description |
@@ -78,8 +119,11 @@ WinInstagram is deliberate about *when* it speaks, because saying the wrong thin
 | <kbd>Space</kbd> | **Play / Pause** | Toggles video playback |
 | <kbd>M</kbd> | **Mute / Unmute** | Toggles audio mute state |
 | <kbd>L</kbd> | **Like / Unlike** | Likes or unlikes the current reel |
-| <kbd>S</kbd> | **Share** | Copies the reel's link to the clipboard |
+| <kbd>S</kbd> | **Share** | Copies `caption — @creator — link` to the clipboard |
 | <kbd>C</kbd> | **Comments** | Opens or closes the accessible Comments drawer |
+| <kbd>T</kbd> | **Captions** | Reads out the video's own caption track (WebVTT) |
+| <kbd>D</kbd> | **Describe** | Reads out the image description, caption and creator |
+| <kbd>Ctrl</kbd> + <kbd>S</kbd> | **Save media** | Saves the media and a text file describing it |
 
 > **Note:** When typing inside any comment input box, single-key shortcuts (<kbd>Space</kbd>, <kbd>M</kbd>, <kbd>L</kbd>, <kbd>J</kbd>, <kbd>K</kbd>, <kbd>C</kbd>) are automatically suppressed so you can type freely.
 
@@ -146,25 +190,40 @@ The window is split in two: the **WebView2 engine on the left** and a **native a
 ```
 WinInstagram/
 ├── Models/
-│   ├── FeedPost.cs          # Timeline post model with permalink, pk and accessible description
-│   ├── ReelItem.cs          # Reel & InstagramComment models with UIA notifications
-│   └── DirectMessage.cs     # DM conversation (group/unread aware) & message models
+│   ├── FeedPost.cs              # Timeline post model with permalink, pk, alt text, carousel count
+│   ├── ReelItem.cs              # Reel & InstagramComment models with UIA notifications
+│   ├── DirectMessage.cs         # DM conversation (group/unread aware) & message models
+│   ├── StoryItem.cs             # One stories-tray entry, pausable and steppable
+│   ├── ProfileCard.cs           # Profile summary + SearchResult model
+│   ├── ActivityItem.cs          # One activity-feed entry, read as a sentence
+│   ├── SavedCollection.cs       # A named bucket of saved posts
+│   ├── AppSettings.cs           # Persisted preferences and the VerbosityLevel enum
+│   └── PaletteCommand.cs        # Command palette rows and the shared command ids
 ├── Services/
 │   ├── AccessibilityHelper.cs   # Windows UIA live region announcement bridge
+│   ├── Announcements.cs         # The one place that decides how much is spoken
 │   ├── AppLogger.cs             # High-speed formatted logger
+│   ├── AppSettingsService.cs    # Atomic settings load/save in %AppData%\WinInstagram
+│   ├── ShortcutService.cs       # Remappable keyboard map + screen-reader preset
+│   ├── ShareText.cs             # Builds "caption — @creator — link" share text
+│   ├── MediaSaveService.cs      # Saves media plus a text file describing it
 │   ├── InstagramBridgeService.cs# WebView2 interop, injected page script, network parsing
-│   ├── InstagramParser.cs       # Timeline / comments / direct_v2 JSON parsing
+│   ├── InstagramParser.cs       # Timeline / comments / direct_v2 / stories / profile / saved / activity
 │   └── UpdateService.cs         # GitHub Releases based self-updater
 ├── Views/
 │   ├── LoginView.xaml           # Isolated Edge WebView2 engine (login, home, reels, DMs)
-│   ├── HomeView.xaml            # Native accessible timeline list
-│   ├── ReelsView.xaml           # Native reel details, actions and watch history
-│   └── MessagesView.xaml        # Native accessible inbox and thread reader
-├── ViewModels/
-│   ├── HomeViewModel.cs         # Feed list, truthful like state
-│   ├── ReelsViewModel.cs        # Live reel state and watch history
-│   └── MessagesViewModel.cs     # Conversations, messages, sending replies
-├── MainWindow.xaml              # Accessible shell, native panel host & Comments Drawer
+│   ├── HomeView.xaml            # Native accessible timeline list, alt text and carousel stepping
+│   ├── ReelsView.xaml           # Native reel details, captions, description, actions, watch history
+│   ├── MessagesView.xaml        # Native accessible inbox and thread reader
+│   ├── StoriesView.xaml         # Pausable stories navigator
+│   ├── ProfileView.xaml         # Native profile viewer
+│   ├── SearchView.xaml          # Native account / hashtag / post search
+│   ├── SavedView.xaml           # Saved posts and collections
+│   ├── ActivityView.xaml        # New-activity reader
+│   ├── SettingsView.xaml        # Verbosity, behaviour and shortcut remapping
+│   └── CommandPaletteView.xaml  # Ctrl+K overlay listing every native command
+├── ViewModels/                  # One view model per panel; hidden panels never speak
+├── MainWindow.xaml              # Accessible shell, panel host, Comments Drawer, palette overlay
 └── WinInstagram.csproj          # .NET 10 Windows Desktop project
 ```
 
@@ -172,9 +231,16 @@ WinInstagram/
 
 | Panel | Source | Notes |
 | :--- | :--- | :--- |
-| Home feed | Instagram timeline responses (`/api/v1/feed/…`, GraphQL timeline) | Real ids, permalinks and like counts; likes are confirmed against Instagram |
+| Home feed | Instagram timeline responses (`/api/v1/feed/…`, GraphQL timeline) | Real ids, permalinks, alt text and carousel counts; likes are confirmed against Instagram. Stories are excluded from the timeline and live in their own panel |
 | Direct messages | `direct_v2` inbox and thread responses | Unknown payload shapes are ignored rather than guessed |
-| Reels | Live state read from the playing reel in the engine | Actions are executed by the shell; the panel only presents and raises events |
+| Reels | Live state read from the playing reel in the engine | Actions are executed by the shell; the panel only presents and raises events. Captions are read from the video's own WebVTT track |
+| Stories | `feed/reels_tray` | Tray entries become pausable, steppable items instead of vanishing posts |
+| Profile | `users/web_profile_info` | Bio, counts and account type as text, plus recent posts from the same payload |
+| Search | `web/search/topsearch` | Accounts and hashtags, with posts picked up by the ordinary post scanner |
+| Saved | `feed/saved/posts` and `collections/list` | The panel states plainly that Instagram does not report which collection a saved post belongs to |
+| Activity | `news/inbox` | Polled in the background so new activity can be announced while you work |
+
+**How the discovery panels talk to Instagram.** The injected page script exposes one helper, `apiGet(url, tag)`, which fetches an Instagram endpoint with the page's own authenticated session and posts the raw body back to the app. `InstagramBridgeService` routes each body to the parser for its tag, so every discovery panel is filled from Instagram's own data and nothing is scraped from the DOM. A non-2xx response is reported honestly instead of being shown as an empty list.
 
 ---
 

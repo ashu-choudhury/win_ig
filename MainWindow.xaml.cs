@@ -1,11 +1,14 @@
 using System.Collections.ObjectModel;
+using System.ComponentModel;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
 using System.Windows.Input;
 using System.Windows.Media;
+using System.Windows.Threading;
 using WinInstagram.Models;
 using WinInstagram.Services;
+using WinInstagram.ViewModels;
 
 namespace WinInstagram;
 
@@ -21,6 +24,16 @@ public partial class MainWindow : Window
     private UpdateInfo? _pendingUpdate;
     private bool _isDownloadingUpdate = false;
 
+    /// <summary>The native panel currently on screen. It is not always a navigation tab, because
+    /// the discovery panels (Stories, Profile, Saved, Activity) are opened on demand.</summary>
+    private string _currentPanel = string.Empty;
+
+    private DispatcherTimer? _activityPollTimer;
+    private bool _activityPollAttached;
+    private bool _restoredReadingPosition;
+    private bool _restoredThread;
+    private bool _resumedReel;
+
     public MainWindow()
     {
         InitializeComponent();
@@ -30,6 +43,13 @@ public partial class MainWindow : Window
     {
         AccessibilityHelper.RegisterAnnouncementTarget(TxtFooterStatus);
         ListComments.ItemsSource = _activeComments;
+
+        // Preferences are applied before anything can speak, so the first announcement already
+        // respects the chosen verbosity and the saved keyboard map.
+        var prefs = AppSettingsService.Instance.Settings;
+        Announcements.Verbosity = prefs.Verbosity;
+        ShortcutService.Instance.LoadFromSettings(prefs);
+        AppSettingsService.Instance.Changed += _ => ApplyPreferences();
 
         UpdateService.Instance.UpdateAvailable += OnUpdateAvailable;
         UpdateService.Instance.UpdateCheckStatusUpdated += OnUpdateCheckStatusUpdated;
@@ -60,6 +80,8 @@ public partial class MainWindow : Window
         // the single owner of engine navigation and the single owner of anything spoken.
         ViewHome.ViewModel.OpenInEngineRequested += NavigateToDeepLink;
         ViewHome.RefreshRequested += ReloadHomeFeed;
+        ViewHome.ShareRequested += ShareCurrent;
+        ViewHome.DescribeRequested += () => _ = DescribeCurrentAsync(altOnly: false);
         ViewReels.PreviousRequested += () => _ = InstagramBridgeService.Instance.PreviousReelAsync();
         ViewReels.NextRequested += () => _ = InstagramBridgeService.Instance.NextReelAsync();
         ViewReels.PlayPauseRequested += () => _ = InstagramBridgeService.Instance.TogglePlayAsync();
@@ -68,8 +90,33 @@ public partial class MainWindow : Window
         ViewReels.ShareRequested += ShareActiveReel;
         ViewReels.CommentsRequested += ToggleCommentsDrawer;
         ViewReels.HistoryOpenRequested += NavigateToDeepLink;
+        ViewReels.CaptionsRequested += () => _ = ReadCaptionsAsync();
+        ViewReels.DescribeRequested += () => _ = DescribeCurrentAsync(altOnly: false);
+        ViewReels.SaveRequested += () => _ = SaveCurrentMediaAsync();
         ViewMessages.ViewModel.OpenThreadRequested += OpenDirectThread;
         ViewMessages.SyncRequested += ReloadInbox;
+
+        // Discovery panels. They own their own engine calls and raise an open request for anything
+        // that needs real navigation, so the shell stays the single navigator.
+        ViewStories.ViewModel.OpenStoryRequested += NavigateToDeepLink;
+        ViewProfile.ViewModel.OpenInEngineRequested += NavigateToDeepLink;
+        ViewSearch.ViewModel.OpenResultRequested += NavigateToDeepLink;
+        ViewSaved.OpenPostRequested += NavigateToDeepLink;
+        ViewActivity.ViewModel.OpenItemRequested += NavigateToDeepLink;
+
+        // Preferences and the command palette.
+        ViewSettings.ViewModel.SettingsChanged += ApplyPreferences;
+        ViewSettings.ViewModel.ChooseSaveFolderRequested += ChooseMediaFolder;
+        ViewPalette.CommandInvoked += RunPaletteCommand;
+        ViewPalette.DismissRequested += ClosePalette;
+
+        // Reading-position memory: remember quietly on every move, persist when the app closes.
+        ViewHome.ViewModel.PropertyChanged += OnHomePropertyChanged;
+        ViewMessages.ViewModel.PropertyChanged += OnMessagesPropertyChanged;
+        InstagramBridgeService.Instance.FeedReceived += _ => RestoreReadingPosition();
+        InstagramBridgeService.Instance.ConversationsReceived += RestoreLastThread;
+
+        StartActivityPoll();
 
         ViewLogin.LoginSucceeded += OnLoginSucceeded;
         InstagramBridgeService.Instance.LoginStatusChanged += OnLoginStatusChanged;
@@ -94,6 +141,12 @@ public partial class MainWindow : Window
                 }
                 _activeReel = reel;
 
+                // Reading-position memory for reels: the page URL is the reel identity.
+                if (isNew && !string.IsNullOrWhiteSpace(reel.Id))
+                {
+                    AppSettingsService.Instance.Settings.LastReadReelUrl = reel.Id;
+                }
+
                 var likesInfo = !string.IsNullOrWhiteSpace(reel.FormattedLikes) ? $" • ❤️ {reel.FormattedLikes} likes" : "";
                 var likeBtnLabel = reel.ReelLikeButtonText;
 
@@ -113,16 +166,19 @@ public partial class MainWindow : Window
 
                 if (isNew)
                 {
-                    var announceMsg = $"Reel by @{reel.Username}. {(!string.IsNullOrWhiteSpace(reel.FormattedLikes) ? reel.FormattedLikes + " likes. " : "")}{reel.Caption}";
-                    AccessibilityHelper.Announce(announceMsg);
+                    // The creator is essential; likes and caption are detail; captions are extra.
+                    var likesPart = !string.IsNullOrWhiteSpace(reel.FormattedLikes) ? $", {reel.FormattedLikes} likes" : string.Empty;
+                    Announcements.Say($"Reel by @{reel.Username}{likesPart}.");
+                    Announcements.Detail(!string.IsNullOrWhiteSpace(reel.Caption) ? $"Caption: {reel.Caption}" : "This reel has no caption.");
+                    Announcements.Extra(!string.IsNullOrWhiteSpace(reel.AltText) ? $"Visual description: {reel.AltText}" : string.Empty);
                 }
                 else if (playStateChanged)
                 {
-                    AccessibilityHelper.Announce(isPlaying ? "Playing" : "Paused");
+                    Announcements.Detail(isPlaying ? "Playing" : "Paused");
                 }
                 else if (muteStateChanged)
                 {
-                    AccessibilityHelper.Announce(isMuted ? "Audio muted" : "Audio unmuted");
+                    Announcements.Detail(isMuted ? "Audio muted" : "Audio unmuted");
                 }
             });
         };
@@ -210,6 +266,7 @@ public partial class MainWindow : Window
             ReelControlsPanel.Visibility = Visibility.Collapsed;
             // Login and two-factor flows need the full window, so hand the whole area to the engine.
             HideNativePanel();
+            _currentPanel = string.Empty;
             ViewLogin.SetAccessibleFocusable(true);
             AccessibilityHelper.Announce("Account and Login view.");
         }
@@ -231,12 +288,17 @@ public partial class MainWindow : Window
                 ShowNativePanel("Reels", "Reels. The video plays in the web view on the left. The native panel on the right shows reel details and your watch history. Press F6 to hide the panel for full screen video.");
                 BtnNextReel.Focus();
                 InstagramBridgeService.Instance.NavigateToReels();
+                ResumeLastReelIfAny();
                 break;
 
             case "Search":
                 ReelControlsPanel.Visibility = Visibility.Collapsed;
-                HideNativePanel();
-                OpenSearchBar();
+                // Both search surfaces stay available: native text results on the right, and the link
+                // bar at the top for opening one specific reel or post.
+                SearchBarPanel.Visibility = Visibility.Visible;
+                ShowNativePanel("Search");
+                ViewSearch.FocusSearch();
+                Announcements.Say("Instagram search. Type a name, hashtag or keyword in the search box and press Enter. Use the link bar at the top to open a specific reel or post link.");
                 break;
 
             case "Messages":
@@ -250,27 +312,38 @@ public partial class MainWindow : Window
                 ReelControlsPanel.Visibility = Visibility.Collapsed;
                 CloseSearchBar();
                 HideNativePanel();
+                _currentPanel = string.Empty;
                 OpenSettingsDialog();
                 break;
         }
     }
 
     /// <summary>
-    /// Shows the native panel for a tab, unless the user has hidden it or the comments drawer
-    /// currently occupies the same slot. Also marks exactly one view model active so a hidden
-    /// view never speaks.
+    /// Shows one native panel, or the comments drawer's slot if it is open. Exactly one view model
+    /// is marked active, which is what keeps a hidden panel from speaking.
     /// </summary>
     private void ShowNativePanel(string tag, string? announcement = null)
     {
         _panelManuallyHidden = false;
+        _currentPanel = tag;
 
         ViewHome.ViewModel.IsActive = tag == "Home";
         ViewReels.ViewModel.IsActive = tag == "Reels";
         ViewMessages.ViewModel.IsActive = tag == "Messages";
+        ViewStories.ViewModel.IsActive = tag == "Stories";
+        ViewProfile.ViewModel.IsActive = tag == "Profile";
+        ViewSearch.ViewModel.IsActive = tag == "Search";
+        ViewSaved.ViewModel.IsActive = tag == "Saved";
+        ViewActivity.ViewModel.IsActive = tag == "Activity";
 
-        ViewHome.Visibility = tag == "Home" ? Visibility.Visible : Visibility.Collapsed;
-        ViewReels.Visibility = tag == "Reels" ? Visibility.Visible : Visibility.Collapsed;
-        ViewMessages.Visibility = tag == "Messages" ? Visibility.Visible : Visibility.Collapsed;
+        ViewHome.Visibility = VisibleFor(tag, "Home");
+        ViewReels.Visibility = VisibleFor(tag, "Reels");
+        ViewMessages.Visibility = VisibleFor(tag, "Messages");
+        ViewStories.Visibility = VisibleFor(tag, "Stories");
+        ViewProfile.Visibility = VisibleFor(tag, "Profile");
+        ViewSearch.Visibility = VisibleFor(tag, "Search");
+        ViewSaved.Visibility = VisibleFor(tag, "Saved");
+        ViewActivity.Visibility = VisibleFor(tag, "Activity");
 
         // The comments drawer shares this slot, so do not cover it.
         if (CommentsDrawer.Visibility != Visibility.Visible)
@@ -285,22 +358,37 @@ public partial class MainWindow : Window
         }
     }
 
-    /// <summary>Hides the native panel and stops its view model from speaking.</summary>
+    private static Visibility VisibleFor(string tag, string wanted) =>
+        tag == wanted ? Visibility.Visible : Visibility.Collapsed;
+
+    /// <summary>Hides the native panel and stops every view model from speaking.</summary>
     private void HideNativePanel()
     {
         NativePanelHost.Visibility = Visibility.Collapsed;
+        ViewHome.Visibility = Visibility.Collapsed;
+        ViewReels.Visibility = Visibility.Collapsed;
+        ViewMessages.Visibility = Visibility.Collapsed;
+        ViewStories.Visibility = Visibility.Collapsed;
+        ViewProfile.Visibility = Visibility.Collapsed;
+        ViewSearch.Visibility = Visibility.Collapsed;
+        ViewSaved.Visibility = Visibility.Collapsed;
+        ViewActivity.Visibility = Visibility.Collapsed;
         ViewHome.ViewModel.IsActive = false;
         ViewReels.ViewModel.IsActive = false;
         ViewMessages.ViewModel.IsActive = false;
+        ViewStories.ViewModel.IsActive = false;
+        ViewProfile.ViewModel.IsActive = false;
+        ViewSearch.ViewModel.IsActive = false;
+        ViewSaved.ViewModel.IsActive = false;
+        ViewActivity.ViewModel.IsActive = false;
     }
 
-    /// <summary>F6: hide the panel for a full width web view, or bring it back.</summary>
+    /// <summary>F6: hide the panel for a full width web view, or bring the same panel back.</summary>
     private void ToggleNativePanel()
     {
-        var panelTab = _currentTab is "Home" or "Reels" or "Messages";
-        if (!panelTab)
+        if (string.IsNullOrWhiteSpace(_currentPanel))
         {
-            AccessibilityHelper.Announce("The native panel is available on the Home, Reels and Messages tabs.");
+            Announcements.Say("The native panel is available on the Home, Reels and Messages tabs, and on the Stories, Profile, Search, Saved and Activity panels.");
             return;
         }
 
@@ -308,13 +396,14 @@ public partial class MainWindow : Window
         {
             _panelManuallyHidden = true;
             HideNativePanel();
-            AccessibilityHelper.Announce("Native panel hidden. The web view is now full width. Press F6 to show the panel again.");
+            Announcements.Say("Panel hidden. The web view is now full width. Press F6 to show the panel again.");
         }
         else
         {
-            ShowNativePanel(_currentTab);
-            AccessibilityHelper.Announce("Native panel shown.");
-            PlaceFocusInPanel(_currentTab);
+            var tag = _currentPanel;
+            ShowNativePanel(tag);
+            Announcements.Say("Panel shown.");
+            PlaceFocusInPanel(tag);
         }
     }
 
@@ -324,6 +413,11 @@ public partial class MainWindow : Window
         {
             case "Home": ViewHome.FocusPosts(); break;
             case "Messages": ViewMessages.FocusConversations(); break;
+            case "Stories": ViewStories.FocusStories(); break;
+            case "Profile": ViewProfile.FocusPosts(); break;
+            case "Search": ViewSearch.FocusSearch(); break;
+            case "Saved": ViewSaved.FocusCollections(); break;
+            case "Activity": ViewActivity.FocusItems(); break;
         }
     }
 
@@ -489,7 +583,7 @@ public partial class MainWindow : Window
     {
         if (_activeReel == null)
         {
-            AccessibilityHelper.Announce("No active reel to share.");
+            Announcements.Say("No active reel to share.");
             return;
         }
 
@@ -503,18 +597,497 @@ public partial class MainWindow : Window
             shareUrl = "https://www.instagram.com/reels/";
         }
 
+        // A bare link is useless without context, so the clipboard gets caption, creator and link.
+        CopyShareText(ShareText.Build(_activeReel.Caption, _activeReel.Username, shareUrl));
+    }
+
+    // ---- Command palette ----------------------------------------------------------------------
+
+    private void BtnPalette_Click(object sender, RoutedEventArgs e) => OpenPalette();
+
+    /// <summary>Ctrl+K: the one place where every native feature is listed and runnable.</summary>
+    private void OpenPalette()
+    {
+        ViewPalette.Visibility = Visibility.Visible;
+        ViewPalette.FocusFilter();
+        Announcements.Say("Command palette. Type to filter, press Enter to run the highlighted command, Escape to close.");
+    }
+
+    private void ClosePalette()
+    {
+        ViewPalette.Visibility = Visibility.Collapsed;
+    }
+
+    /// <summary>Runs one palette command. Every id in <see cref="PaletteCommandIds"/> is handled.</summary>
+    private void RunPaletteCommand(string id)
+    {
+        ClosePalette();
+
+        switch (id)
+        {
+            case PaletteCommandIds.OpenHomePanel: if (NavHome.IsEnabled) NavHome.IsChecked = true; break;
+            case PaletteCommandIds.OpenReelsPanel: if (NavReels.IsEnabled) NavReels.IsChecked = true; break;
+            case PaletteCommandIds.OpenMessagesPanel: if (NavMessages.IsEnabled) NavMessages.IsChecked = true; break;
+            case PaletteCommandIds.OpenSearchPanel: NavSearch.IsChecked = true; break;
+            case PaletteCommandIds.OpenStoriesPanel: OpenDiscoveryPanel("Stories"); break;
+            case PaletteCommandIds.OpenSavedPanel: OpenDiscoveryPanel("Saved"); break;
+            case PaletteCommandIds.OpenActivityPanel: OpenDiscoveryPanel("Activity"); break;
+            case PaletteCommandIds.OpenProfilePanel: OpenCreatorProfile(); break;
+            case PaletteCommandIds.TogglePanel: ToggleNativePanel(); break;
+
+            case PaletteCommandIds.Refresh: RefreshCurrentPanel(); break;
+            case PaletteCommandIds.NextReel: _ = InstagramBridgeService.Instance.NextReelAsync(); break;
+            case PaletteCommandIds.PreviousReel: _ = InstagramBridgeService.Instance.PreviousReelAsync(); break;
+            case PaletteCommandIds.PlayPause: _ = InstagramBridgeService.Instance.TogglePlayAsync(); break;
+            case PaletteCommandIds.Mute: _ = InstagramBridgeService.Instance.ToggleMuteAsync(); break;
+            case PaletteCommandIds.Like: ToggleLikeCurrent(); break;
+            case PaletteCommandIds.Comments: ToggleCommentsDrawer(); break;
+            case PaletteCommandIds.Share: ShareCurrent(); break;
+            case PaletteCommandIds.SaveMedia: _ = SaveCurrentMediaAsync(); break;
+
+            case PaletteCommandIds.ReadCaptions: _ = ReadCaptionsAsync(); break;
+            case PaletteCommandIds.ReadAltText: _ = DescribeCurrentAsync(altOnly: true); break;
+            case PaletteCommandIds.ReadDescription: _ = DescribeCurrentAsync(altOnly: false); break;
+            case PaletteCommandIds.CheckControls: _ = SpeakControlHealthAsync(); break;
+
+            case PaletteCommandIds.CycleVerbosity: CycleVerbosity(); break;
+            case PaletteCommandIds.Settings: if (NavSettings.IsChecked != true) NavSettings.IsChecked = true; break;
+            case PaletteCommandIds.ShortcutHelp: AnnounceShortcutHelp(); break;
+            case PaletteCommandIds.CheckUpdates: CheckForUpdatesManual(); break;
+
+            default:
+                AppLogger.Warn("PALETTE", $"Unknown palette command '{id}'.");
+                break;
+        }
+    }
+
+    /// <summary>
+    /// Shows one of the discovery panels. They load from Instagram's own API, so nothing has to be
+    /// navigated first and the web view keeps playing whatever it was playing.
+    /// </summary>
+    private void OpenDiscoveryPanel(string tag)
+    {
+        if (!InstagramBridgeService.Instance.IsLoggedIn)
+        {
+            Announcements.Say("Sign in to Instagram first, then open this panel.");
+            return;
+        }
+
+        ShowNativePanel(tag);
+
+        switch (tag)
+        {
+            case "Stories":
+                _ = ViewStories.ViewModel.RefreshAsync();
+                PlaceFocusInPanel(tag);
+                break;
+            case "Saved":
+                _ = ViewSaved.ViewModel.RefreshAsync();
+                PlaceFocusInPanel(tag);
+                break;
+            case "Activity":
+                _ = ViewActivity.ViewModel.RefreshAsync(announceNew: true);
+                PlaceFocusInPanel(tag);
+                break;
+        }
+    }
+
+    /// <summary>Opens the profile of whoever owns the media in front of the user.</summary>
+    private void OpenCreatorProfile()
+    {
+        var username = _activeReel != null && !string.IsNullOrWhiteSpace(_activeReel.Username) &&
+                       !_activeReel.Username.Equals("Instagram User", StringComparison.OrdinalIgnoreCase)
+            ? _activeReel.Username
+            : ViewHome.ViewModel.SelectedPost?.Username ?? string.Empty;
+
+        if (string.IsNullOrWhiteSpace(username))
+        {
+            Announcements.Say("No creator is known yet. Open a post or a reel first, then ask for the profile.");
+            return;
+        }
+
+        ShowNativePanel("Profile");
+        _ = ViewProfile.ViewModel.LoadAsync(username);
+    }
+
+    private void RefreshCurrentPanel()
+    {
+        switch (_currentPanel)
+        {
+            case "Messages": ReloadInbox(); break;
+            case "Stories": _ = ViewStories.ViewModel.RefreshAsync(); break;
+            case "Saved": _ = ViewSaved.ViewModel.RefreshAsync(); break;
+            case "Activity": _ = ViewActivity.ViewModel.RefreshAsync(announceNew: true); break;
+            case "Reels":
+                InstagramBridgeService.Instance.NavigateToReels();
+                Announcements.Say("Refreshing reels.");
+                break;
+            default: ReloadHomeFeed(); break;
+        }
+    }
+
+    // ---- Media actions -------------------------------------------------------------------------
+
+    /// <summary>Like targets whatever the user is actually reading, not always the reel.</summary>
+    private void ToggleLikeCurrent()
+    {
+        if (_currentPanel == "Home")
+        {
+            _ = ViewHome.ViewModel.ToggleLikeCurrentAsync();
+            return;
+        }
+        ToggleActiveReelLike();
+    }
+
+    private void ShareCurrent()
+    {
+        if (_currentPanel == "Home" && ViewHome.ViewModel.SelectedPost is FeedPost post)
+        {
+            var url = string.IsNullOrWhiteSpace(post.MediaCode) ? string.Empty : $"https://www.instagram.com/p/{post.MediaCode}/";
+            CopyShareText(ShareText.Build(post.Caption, post.Username, url));
+            return;
+        }
+
+        ShareActiveReel();
+    }
+
+    private void CopyShareText(string text)
+    {
+        if (string.IsNullOrWhiteSpace(text))
+        {
+            Announcements.Say("There is nothing here to share.");
+            return;
+        }
+
         try
         {
-            Clipboard.SetText(shareUrl);
-            var announce = $"Reel link copied to clipboard: {shareUrl}. You can now share it with friends.";
-            TxtFooterStatus.Text = announce;
-            AccessibilityHelper.Announce(announce);
+            Clipboard.SetText(text);
+            TxtFooterStatus.Text = $"Copied: {text}";
+            Announcements.Say($"Copied to the clipboard: {text}");
         }
         catch (Exception ex)
         {
-            AppLogger.Error("SHARE", "Failed to copy reel link to clipboard", ex);
-            AccessibilityHelper.Announce("Failed to copy link to clipboard.");
+            AppLogger.Error("SHARE", "Failed to copy share text to clipboard", ex);
+            Announcements.Say("Could not copy to the clipboard.");
         }
+    }
+
+    private void BtnSaveMediaReel_Click(object sender, RoutedEventArgs e) => _ = SaveCurrentMediaAsync();
+    private void BtnCaptionsReel_Click(object sender, RoutedEventArgs e) => _ = ReadCaptionsAsync();
+    private void BtnDescribeReel_Click(object sender, RoutedEventArgs e) => _ = DescribeCurrentAsync(altOnly: false);
+
+    /// <summary>
+    /// Saves the media the user is looking at, plus a text file with its caption, alt text and link,
+    /// so the saved copy stays usable without sight.
+    /// </summary>
+    private async Task SaveCurrentMediaAsync()
+    {
+        string? mediaUrl = null;
+        var caption = string.Empty;
+        var alt = string.Empty;
+        var username = string.Empty;
+        var pageUrl = string.Empty;
+
+        if (_currentPanel == "Home" && ViewHome.ViewModel.SelectedPost is FeedPost post)
+        {
+            mediaUrl = post.MediaUrl;
+            caption = post.Caption;
+            alt = post.AltText;
+            username = post.Username;
+            pageUrl = string.IsNullOrWhiteSpace(post.MediaCode) ? string.Empty : $"https://www.instagram.com/p/{post.MediaCode}/";
+        }
+
+        // Fall back to whatever the page itself is showing, which is how reels and stories are saved.
+        if (string.IsNullOrWhiteSpace(mediaUrl) || string.IsNullOrWhiteSpace(caption))
+        {
+            var info = await InstagramBridgeService.Instance.ReadActiveMediaAsync();
+            if (info != null)
+            {
+                if (string.IsNullOrWhiteSpace(mediaUrl))
+                {
+                    mediaUrl = string.IsNullOrWhiteSpace(info.VideoUrl) ? info.ImageUrl : info.VideoUrl;
+                }
+                if (string.IsNullOrWhiteSpace(caption)) caption = info.Caption;
+                if (string.IsNullOrWhiteSpace(alt)) alt = info.AltText;
+                if (string.IsNullOrWhiteSpace(username)) username = info.Username;
+                if (string.IsNullOrWhiteSpace(pageUrl)) pageUrl = info.PageUrl;
+            }
+        }
+
+        if (_activeReel != null)
+        {
+            if (string.IsNullOrWhiteSpace(caption)) caption = _activeReel.Caption;
+            if (string.IsNullOrWhiteSpace(alt)) alt = _activeReel.AltText;
+            if (string.IsNullOrWhiteSpace(username)) username = _activeReel.Username;
+        }
+
+        Announcements.Say("Saving the current media...");
+        var result = await MediaSaveService.Instance.SaveAsync(mediaUrl, caption, alt, username, pageUrl);
+        TxtFooterStatus.Text = result.Message;
+        Announcements.Say(result.Message);
+
+        // When a save fails, the useful thing to say is which control is missing from the page.
+        if (!result.Ok && AppSettingsService.Instance.Settings.AnnounceSelectorWarnings)
+        {
+            await SpeakControlHealthAsync();
+        }
+    }
+
+    /// <summary>Reads the video's own caption track, which is the only text equivalent a video has.</summary>
+    private async Task ReadCaptionsAsync()
+    {
+        TxtFooterStatus.Text = "Looking for captions on this video...";
+        var text = await InstagramBridgeService.Instance.ReadActiveCaptionsAsync();
+
+        if (string.IsNullOrWhiteSpace(text))
+        {
+            var message = "This video has no caption track. Instagram only publishes captions when the creator uploaded them.";
+            TxtFooterStatus.Text = message;
+            Announcements.Say(message);
+            return;
+        }
+
+        // The panel shows the transcript too, so a user who can see both gets the same text.
+        ViewReels.ViewModel.ShowCaptions(text);
+
+        TxtFooterStatus.Text = text;
+        Announcements.Say($"Captions: {text}");
+    }
+
+    /// <summary>Reads out what is on screen: the image description, and optionally the caption and stats.</summary>
+    private async Task DescribeCurrentAsync(bool altOnly)
+    {
+        var parts = new List<string>();
+
+        if (_currentPanel == "Home" && ViewHome.ViewModel.SelectedPost is FeedPost post)
+        {
+            if (!string.IsNullOrWhiteSpace(post.AltText)) parts.Add($"Image description: {post.AltText}");
+            if (!altOnly)
+            {
+                if (!string.IsNullOrWhiteSpace(post.Caption)) parts.Add($"Caption: {post.Caption}");
+                parts.Add($"By @{post.Username}. {post.FormattedLikes} likes, {post.CommentsCount} comments.");
+            }
+        }
+        else
+        {
+            var alt = await InstagramBridgeService.Instance.ReadActiveAltTextAsync();
+            if (!string.IsNullOrWhiteSpace(alt)) parts.Add($"Image description: {alt}");
+            if (!altOnly && _activeReel != null)
+            {
+                if (!string.IsNullOrWhiteSpace(_activeReel.Caption)) parts.Add($"Caption: {_activeReel.Caption}");
+                parts.Add($"By @{_activeReel.Username}. Audio: {_activeReel.AudioTitle}.");
+            }
+        }
+
+        if (parts.Count == 0)
+        {
+            var message = altOnly
+                ? "Instagram provided no image description for this media."
+                : "There is nothing on screen to describe yet. Open a post or a reel first.";
+            TxtFooterStatus.Text = message;
+            Announcements.Say(message);
+            if (AppSettingsService.Instance.Settings.AnnounceSelectorWarnings) await SpeakControlHealthAsync();
+            return;
+        }
+
+        var described = string.Join(" ", parts);
+        TxtFooterStatus.Text = described;
+        Announcements.Say(described);
+    }
+
+    /// <summary>
+    /// Verify-before-announce: checks the page for every control the native panels drive and says
+    /// exactly which ones are missing, instead of letting a key press silently do nothing.
+    /// </summary>
+    private async Task SpeakControlHealthAsync()
+    {
+        var report = await InstagramBridgeService.Instance.ProbeSelectorsAsync();
+        var description = report.Describe();
+        TxtFooterStatus.Text = description;
+        Announcements.Say(description);
+    }
+
+    // ---- Preferences --------------------------------------------------------------------------
+
+    private void ApplyPreferences()
+    {
+        var settings = AppSettingsService.Instance.Settings;
+        Announcements.Verbosity = settings.Verbosity;
+
+        if (settings.NotificationsEnabled) StartActivityPoll();
+        else StopActivityPoll();
+    }
+
+    private void CycleVerbosity()
+    {
+        var next = AppSettingsService.Instance.Settings.Verbosity switch
+        {
+            VerbosityLevel.Terse => VerbosityLevel.Standard,
+            VerbosityLevel.Standard => VerbosityLevel.Verbose,
+            _ => VerbosityLevel.Terse
+        };
+
+        AppSettingsService.Instance.Update(s => s.Verbosity = next);
+        // Applied here as well as through the settings event, so the change is live immediately.
+        Announcements.Verbosity = next;
+
+        var spoken = next switch
+        {
+            VerbosityLevel.Terse => "Terse. WinInstagram now only says what you did and what happened.",
+            VerbosityLevel.Standard => "Standard. WinInstagram now adds detail such as like counts and audio titles.",
+            _ => "Verbose. WinInstagram now reads captions and descriptions as well."
+        };
+        TxtFooterStatus.Text = spoken;
+        Announcements.Say(spoken);
+    }
+
+    private void AnnounceShortcutHelp()
+    {
+        var shortcutService = ShortcutService.Instance;
+        var lines = shortcutService.Definitions
+            .Select(d => $"{d.Label}: {ShortcutService.DescribeGesture(shortcutService.GetGesture(d.Id))}");
+
+        var text = "Current shortcuts. " + string.Join(". ", lines) + ".";
+        TxtFooterStatus.Text = text;
+        Announcements.Say(text);
+    }
+
+    private void ChooseMediaFolder()
+    {
+        try
+        {
+            var dialog = new Microsoft.Win32.OpenFolderDialog
+            {
+                Title = "Choose where WinInstagram saves media",
+                InitialDirectory = MediaSaveService.Instance.SaveFolder
+            };
+
+            if (dialog.ShowDialog(this) == true && !string.IsNullOrWhiteSpace(dialog.FolderName))
+            {
+                ViewSettings.ViewModel.SetSaveFolder(dialog.FolderName);
+            }
+        }
+        catch (Exception ex)
+        {
+            AppLogger.Error("SAVE", "Folder picker failed", ex);
+            Announcements.Say("Could not open the folder picker.");
+        }
+    }
+
+    // ---- Activity notifications ----------------------------------------------------------------
+
+    private void StartActivityPoll()
+    {
+        _activityPollTimer ??= new DispatcherTimer { Interval = TimeSpan.FromMinutes(1) };
+
+        if (!_activityPollAttached)
+        {
+            _activityPollTimer.Tick += OnActivityPollTick;
+            _activityPollAttached = true;
+        }
+
+        if (!_activityPollTimer.IsEnabled) _activityPollTimer.Start();
+    }
+
+    private void StopActivityPoll() => _activityPollTimer?.Stop();
+
+    private async void OnActivityPollTick(object? sender, EventArgs e)
+    {
+        if (!InstagramBridgeService.Instance.IsLoggedIn) return;
+        if (!AppSettingsService.Instance.Settings.NotificationsEnabled) return;
+
+        // The view model is the single owner of activity announcements: it speaks only when the
+        // panel is open or when this was an explicit/polled check, and it never repeats an entry.
+        await ViewActivity.ViewModel.RefreshAsync(announceNew: true);
+    }
+
+    // ---- Reading-position memory ---------------------------------------------------------------
+
+    private void OnHomePropertyChanged(object? sender, PropertyChangedEventArgs e)
+    {
+        if (e.PropertyName != nameof(HomeViewModel.SelectedPost)) return;
+
+        var post = ViewHome.ViewModel.SelectedPost;
+        if (post == null) return;
+
+        // Held in memory on every move, written to disk when the app closes.
+        var settings = AppSettingsService.Instance.Settings;
+        settings.LastReadPostId = post.Id;
+        settings.LastReadPostCode = post.MediaCode;
+    }
+
+    private void OnMessagesPropertyChanged(object? sender, PropertyChangedEventArgs e)
+    {
+        if (e.PropertyName != nameof(MessagesViewModel.SelectedConversation)) return;
+
+        var conversation = ViewMessages.ViewModel.SelectedConversation;
+        if (conversation == null || string.IsNullOrWhiteSpace(conversation.ThreadId)) return;
+
+        AppSettingsService.Instance.Settings.LastThreadId = conversation.ThreadId;
+    }
+
+    private void RestoreReadingPosition()
+    {
+        if (_restoredReadingPosition) return;
+
+        var settings = AppSettingsService.Instance.Settings;
+        if (string.IsNullOrWhiteSpace(settings.LastReadPostId) && string.IsNullOrWhiteSpace(settings.LastReadPostCode))
+        {
+            _restoredReadingPosition = true;
+            return;
+        }
+
+        // The feed fills in batches, so keep trying until the remembered post has arrived.
+        if (!ViewHome.ViewModel.RestoreTo(settings.LastReadPostId, settings.LastReadPostCode)) return;
+
+        _restoredReadingPosition = true;
+        ViewHome.ScrollToSelected();
+        Announcements.Detail("Restored your place in the feed.");
+    }
+
+    private void RestoreLastThread(List<DirectConversation> conversations)
+    {
+        if (_restoredThread) return;
+
+        var last = AppSettingsService.Instance.Settings.LastThreadId;
+        if (string.IsNullOrWhiteSpace(last))
+        {
+            _restoredThread = true;
+            return;
+        }
+
+        var match = conversations.FirstOrDefault(c => c.ThreadId == last);
+        if (match == null) return;
+
+        _restoredThread = true;
+
+        // Only reopen it when the user is actually looking at messages.
+        if (_currentPanel != "Messages") return;
+
+        ViewMessages.ViewModel.SelectedConversation = match;
+        Announcements.Detail($"Reopened your last conversation with {match.DisplayName}.");
+    }
+
+    /// <summary>Resumes the reel from the previous session, once per launch.</summary>
+    private void ResumeLastReelIfAny()
+    {
+        if (_resumedReel) return;
+        _resumedReel = true;
+
+        var url = AppSettingsService.Instance.Settings.LastReadReelUrl;
+        if (string.IsNullOrWhiteSpace(url) || !url.StartsWith("http", StringComparison.OrdinalIgnoreCase)) return;
+        if (!url.Contains("/reel", StringComparison.OrdinalIgnoreCase)) return;
+
+        InstagramBridgeService.Instance.Navigate(url);
+        Announcements.Say("Resumed the reel you were watching last time.");
+    }
+
+    protected override void OnClosing(CancelEventArgs e)
+    {
+        // Reading position and everything else gathered during the session is written out here.
+        AppSettingsService.Instance.Save();
+        StopActivityPoll();
+        base.OnClosing(e);
     }
 
     private void NavigateToDeepLink(string url)
@@ -765,8 +1338,25 @@ public partial class MainWindow : Window
             }
         }
 
-        // 0.2. F6 shows or hides the native accessible panel
-        if (e.Key == Key.F6)
+        // 0.1. A focused panel may already have dealt with this key.
+        if (e.Handled) return;
+
+        // 0.2. While the command palette is open it owns the keyboard; Escape closes it.
+        if (ViewPalette.Visibility == Visibility.Visible)
+        {
+            if (e.Key == Key.Escape) ClosePalette();
+            return;
+        }
+
+        if (ShortcutService.Instance.Matches(e.Key, Keyboard.Modifiers, "palette"))
+        {
+            OpenPalette();
+            e.Handled = true;
+            return;
+        }
+
+        // 0.3. F6, or whatever the user rebound that action to, shows or hides the native panel.
+        if (ShortcutService.Instance.Matches(e.Key, Keyboard.Modifiers, "togglePanel"))
         {
             ToggleNativePanel();
             e.Handled = true;
@@ -846,66 +1436,117 @@ public partial class MainWindow : Window
             }
         }
 
+        // 2.5. Saving media is available from anywhere, text box included, because it is bound to a
+        // Control combination that never types a character into a field.
+        if (ShortcutService.Instance.Matches(e.Key, Keyboard.Modifiers, "saveMedia"))
+        {
+            _ = SaveCurrentMediaAsync();
+            e.Handled = true;
+            return;
+        }
+
         // 3. If user is currently typing in any text box, DO NOT capture single-character hotkeys
         if (Keyboard.FocusedElement is TextBoxBase)
         {
             return;
         }
 
-        // 4. Hotkeys when on Reels tab
-        if (NavReels.IsChecked == true)
+        // 3.5. Refresh belongs to whichever panel is on screen. Panels handle it themselves when they
+        // have focus, so this covers the Reels tab and any rebound key the panels do not know about.
+        if (ShortcutService.Instance.Matches(e.Key, Keyboard.Modifiers, "refresh"))
         {
-            switch (e.Key)
+            RefreshCurrentPanel();
+            e.Handled = true;
+            return;
+        }
+
+        // 4. Playback shortcuts. They are only live while the Reels panel is the one on screen, so
+        // pressing J on the feed cannot jump the web view to a different reel. Which keys those are
+        // comes from the user's map, so the screen-reader-friendly preset works here too.
+        if (_currentPanel == "Reels")
+        {
+            var shortcuts = ShortcutService.Instance;
+            var modifiers = Keyboard.Modifiers;
+
+            if (shortcuts.Matches(e.Key, modifiers, "nextReel"))
             {
-                case Key.J:
-                    _ = InstagramBridgeService.Instance.NextReelAsync();
-                    e.Handled = true;
-                    break;
+                _ = InstagramBridgeService.Instance.NextReelAsync();
+                e.Handled = true;
+                return;
+            }
 
-                case Key.K:
-                    _ = InstagramBridgeService.Instance.PreviousReelAsync();
-                    e.Handled = true;
-                    break;
+            if (shortcuts.Matches(e.Key, modifiers, "prevReel"))
+            {
+                _ = InstagramBridgeService.Instance.PreviousReelAsync();
+                e.Handled = true;
+                return;
+            }
 
-                // Arrow keys belong to the list focused inside the native panel, if any.
-                case Key.PageDown:
-                case Key.Down:
-                    if (IsFocusInNativePanel()) return;
-                    _ = InstagramBridgeService.Instance.NextReelAsync();
-                    e.Handled = true;
-                    break;
+            if (shortcuts.Matches(e.Key, modifiers, "playPause"))
+            {
+                _ = InstagramBridgeService.Instance.TogglePlayAsync();
+                e.Handled = true;
+                return;
+            }
 
-                case Key.PageUp:
-                case Key.Up:
-                    if (IsFocusInNativePanel()) return;
-                    _ = InstagramBridgeService.Instance.PreviousReelAsync();
-                    e.Handled = true;
-                    break;
+            if (shortcuts.Matches(e.Key, modifiers, "mute"))
+            {
+                _ = InstagramBridgeService.Instance.ToggleMuteAsync();
+                e.Handled = true;
+                return;
+            }
 
-                case Key.Space:
-                    _ = InstagramBridgeService.Instance.TogglePlayAsync();
-                    e.Handled = true;
-                    break;
+            if (shortcuts.Matches(e.Key, modifiers, "like"))
+            {
+                ToggleActiveReelLike();
+                e.Handled = true;
+                return;
+            }
 
-                case Key.M:
-                    _ = InstagramBridgeService.Instance.ToggleMuteAsync();
-                    e.Handled = true;
-                    break;
+            if (shortcuts.Matches(e.Key, modifiers, "comments"))
+            {
+                ToggleCommentsDrawer();
+                e.Handled = true;
+                return;
+            }
 
-                case Key.L:
-                    ToggleActiveReelLike();
-                    e.Handled = true;
-                    break;
+            if (shortcuts.Matches(e.Key, modifiers, "share"))
+            {
+                ShareActiveReel();
+                e.Handled = true;
+                return;
+            }
 
-                case Key.S:
-                    ShareActiveReel();
-                    e.Handled = true;
-                    break;
+            // Captions and descriptions only mean anything while a video is on screen.
+            if (shortcuts.Matches(e.Key, modifiers, "captions"))
+            {
+                _ = ReadCaptionsAsync();
+                e.Handled = true;
+                return;
+            }
 
-                case Key.C:
-                    ToggleCommentsDrawer();
-                    e.Handled = true;
-                    break;
+            if (shortcuts.Matches(e.Key, modifiers, "describe"))
+            {
+                _ = DescribeCurrentAsync(altOnly: false);
+                e.Handled = true;
+                return;
+            }
+
+            // Arrow keys belong to the list focused inside the native panel, if any.
+            if (e.Key is Key.PageDown or Key.Down)
+            {
+                if (IsFocusInNativePanel()) return;
+                _ = InstagramBridgeService.Instance.NextReelAsync();
+                e.Handled = true;
+                return;
+            }
+
+            if (e.Key is Key.PageUp or Key.Up)
+            {
+                if (IsFocusInNativePanel()) return;
+                _ = InstagramBridgeService.Instance.PreviousReelAsync();
+                e.Handled = true;
+                return;
             }
         }
     }

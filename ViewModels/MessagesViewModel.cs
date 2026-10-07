@@ -143,7 +143,7 @@ public class MessagesViewModel : INotifyPropertyChanged
             var newest = conversation.Messages.LastOrDefault();
             if (added > 0 && newest != null)
             {
-                AnnounceIfActive($"{conversation.Messages.Count} messages loaded. Latest message. {newest.AccessibleText}");
+                AnnounceIfActiveDetail($"{conversation.Messages.Count} messages loaded. Latest message. {newest.AccessibleText}");
             }
         }
     }
@@ -216,9 +216,16 @@ public class MessagesViewModel : INotifyPropertyChanged
         AnnounceIfActive($"Message sent to {SelectedConversation.DisplayName}.");
     }
 
+    /// <summary>The outcome of something the user did: always spoken while the panel is shown.</summary>
     private void AnnounceIfActive(string message)
     {
-        if (_isActive) AccessibilityHelper.Announce(message);
+        if (_isActive) Announcements.Say(message);
+    }
+
+    /// <summary>Context rather than a result, so it follows the chosen verbosity.</summary>
+    private void AnnounceIfActiveDetail(string message)
+    {
+        if (_isActive) Announcements.Detail(message);
     }
 
     public event PropertyChangedEventHandler? PropertyChanged;

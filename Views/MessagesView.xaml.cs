@@ -1,6 +1,7 @@
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
+using WinInstagram.Services;
 using WinInstagram.ViewModels;
 
 namespace WinInstagram.Views;
@@ -35,7 +36,7 @@ public partial class MessagesView : UserControl
         // Never steal keys while the user is typing a reply.
         if (TxtReply.IsKeyboardFocusWithin) return;
 
-        if (e.Key == Key.R)
+        if (ShortcutService.Instance.Matches(e.Key, Keyboard.Modifiers, "refresh"))
         {
             SyncRequested?.Invoke();
             e.Handled = true;

@@ -29,6 +29,15 @@ public class InstagramBridgeService
     public event Action<bool>? LoginStatusChanged;
     public event Action<string>? StatusMessageUpdated;
 
+    // Native discovery surfaces. Each one is filled from Instagram's own API response body, so the
+    // native panels never guess at page content.
+    public event Action<List<StoryItem>>? StoriesReceived;
+    public event Action<ProfileCard, List<FeedPost>>? ProfileReceived;
+    public event Action<List<FeedPost>>? SavedPostsReceived;
+    public event Action<List<SavedCollection>>? CollectionsReceived;
+    public event Action<List<ActivityItem>>? ActivityReceived;
+    public event Action<List<SearchResult>>? SearchReceived;
+
     private const string WinInstagramScript = @"
     (function() {
         window.__winInstagram = window.__winInstagram || {};
@@ -404,6 +413,8 @@ public class InstagramBridgeService
                         username: username,
                         caption: caption,
                         audioTitle: audio,
+                        altText: (function() { try { const imgs = Array.from(container.querySelectorAll('img[alt]')); for (const img of imgs) { const a = (img.getAttribute('alt') || '').trim(); if (a && !/profile picture/i.test(a)) return a; } } catch(e) {} return ''; })(),
+                        hasCaptions: !!(v.querySelectorAll && v.querySelectorAll('track').length > 0),
                         formattedLikes: likes,
                         likesCount: numericLikes,
                         commentsCount: commentsCount,
@@ -788,6 +799,298 @@ public class InstagramBridgeService
             } catch(e) { return false; }
         };
 
+        // The page area holding the media currently on screen (reel, story or open post).
+        function activeArticle() {
+            try {
+                const info = getActiveReel();
+                if (info && info.container) return info.container;
+                return document.querySelector('article') || document.body;
+            } catch(e) { return document.body; }
+        }
+
+        // Alt text of the media currently on screen, so a blind user learns what an image shows.
+        window.__winInstagram.readActiveAltText = function() {
+            try {
+                const root = activeArticle();
+                const imgs = Array.from(root.querySelectorAll('img[alt]'));
+                for (const img of imgs) {
+                    const alt = (img.getAttribute('alt') || '').trim();
+                    if (alt && !/profile picture/i.test(alt)) return alt;
+                }
+                return '';
+            } catch(e) { return ''; }
+        };
+
+        // Reads the WebVTT caption track attached to the playing video, when Instagram exposes one.
+        // Returns the joined transcript, or an empty string when the reel has no captions.
+        window.__winInstagram.readActiveCaptions = async function() {
+            try {
+                const info = getActiveReel();
+                const video = (info && info.video) ? info.video : document.querySelector('video');
+                if (!video) return '';
+                const tracks = Array.from(video.querySelectorAll('track'));
+                if (tracks.length === 0) return '';
+                const track = tracks.find(t => {
+                    const kind = (t.getAttribute('kind') || '').toLowerCase();
+                    return kind === 'captions' || kind === 'subtitles' || t.hasAttribute('default');
+                }) || tracks[0];
+                const src = track.getAttribute('src') || track.src || '';
+                if (!src) return '';
+                const res = await fetch(src, { credentials: 'include' });
+                if (!res.ok) return '';
+                const text = await res.text();
+                const cues = [];
+                for (const block of text.split(/\r?\n\r?\n/)) {
+                    const lines = block.split(/\r?\n/).filter(l => {
+                        const t = l.trim();
+                        return t && !/^WEBVTT/.test(t) && !/^\d+$/.test(t) && !/-->/.test(t);
+                    });
+                    const joined = lines.join(' ').trim();
+                    if (joined) cues.push(joined);
+                }
+                return cues.join(' ');
+            } catch(e) { return ''; }
+        };
+
+        // Reads the 2 of 7 style slide indicator Instagram shows on a carousel.
+        function carouselPosition(root) {
+            try {
+                const candidates = Array.from(root.querySelectorAll('span, div'));
+                for (const c of candidates) {
+                    const t = (c.innerText || '').trim();
+                    const m = t.match(/^(\d+)\s*\/\s*(\d+)$/);
+                    if (m) return { index: parseInt(m[1], 10), count: parseInt(m[2], 10) };
+                }
+            } catch(e) {}
+            return null;
+        }
+
+        // Steps a carousel one slide and reports the resulting slide, so the caller can speak the
+        // truth instead of assuming the click worked.
+        window.__winInstagram.stepCarousel = function(direction) {
+            return new Promise(resolve => {
+                try {
+                    const root = activeArticle();
+                    const wanted = direction >= 0 ? 'next' : 'previous';
+                    const btns = Array.from(root.querySelectorAll('button, div[role=""button""]'));
+                    const btn = btns.find(b => {
+                        const aria = (b.getAttribute('aria-label') || '').trim().toLowerCase();
+                        return aria === wanted || aria.startsWith(wanted);
+                    });
+                    if (!btn) { resolve(null); return; }
+                    triggerClick(btn);
+                    setTimeout(() => {
+                        const pos = carouselPosition(root);
+                        let alt = '';
+                        try { alt = window.__winInstagram.readActiveAltText(); } catch(e) {}
+                        resolve({ index: pos ? pos.index : 0, count: pos ? pos.count : 0, altText: alt });
+                    }, 400);
+                } catch(e) { resolve(null); }
+            });
+        };
+
+        // Fetches an Instagram endpoint from inside the authenticated page and hands the raw body
+        // back to the native app, so native panels can be filled from Instagram's own API rather
+        // than by scraping the page. Failures are reported with status 0.
+        window.__winInstagram.apiGet = async function(url, tag) {
+            let status = 0;
+            let body = '';
+            try {
+                const res = await fetch(url, {
+                    method: 'GET',
+                    credentials: 'include',
+                    headers: {
+                        'x-ig-app-id': '936619743392459',
+                        'x-requested-with': 'XMLHttpRequest'
+                    }
+                });
+                status = res.status;
+                body = await res.text();
+            } catch(e) { status = 0; body = ''; }
+            try {
+                if (window.chrome && window.chrome.webview) {
+                    window.chrome.webview.postMessage(JSON.stringify({
+                        type: 'API_JSON', tag: tag, url: url, status: status, body: body
+                    }));
+                }
+            } catch(e) {}
+            return status;
+        };
+
+        // The stories viewer lives at /stories/ and auto-advances on its own timer. These three
+        // helpers let the native navigator step it deliberately and hold it still, and they report
+        // honestly when there is no story on screen to control.
+        function storyRoot() {
+            try {
+                if (!window.location.href.includes('/stories/')) return null;
+                return document.querySelector('div[role=""dialog""]') || document.querySelector('section') || document.body;
+            } catch(e) { return null; }
+        }
+
+        window.__winInstagram.storyState = function() {
+            try {
+                const root = storyRoot();
+                if (!root) return { isStory: false, hasVideo: false, isPaused: false, username: '', altText: '' };
+
+                let paused = null;
+                const videos = Array.from(document.querySelectorAll('video'));
+                for (const v of videos) {
+                    const r = v.getBoundingClientRect();
+                    if (r.height > 0) { paused = v.paused; break; }
+                }
+
+                let username = '';
+                const links = Array.from(root.querySelectorAll('a[href^=""/""]'));
+                for (const a of links) {
+                    const m = (a.getAttribute('href') || '').match(/^\/([a-zA-Z0-9._]+)\/?$/);
+                    if (m && m[1]) {
+                        const cand = m[1].toLowerCase();
+                        if (!['explore', 'reels', 'direct', 'stories', 'accounts'].includes(cand)) { username = m[1]; break; }
+                    }
+                }
+
+                let altText = '';
+                const imgs = Array.from(root.querySelectorAll('img[alt]'));
+                for (const img of imgs) {
+                    const alt = (img.getAttribute('alt') || '').trim();
+                    if (alt && !/profile picture/i.test(alt)) { altText = alt; break; }
+                }
+
+                return {
+                    isStory: true,
+                    hasVideo: paused !== null,
+                    isPaused: paused === true,
+                    username: username,
+                    altText: altText
+                };
+            } catch(e) { return null; }
+        };
+
+        window.__winInstagram.storyPause = function() {
+            try {
+                const videos = Array.from(document.querySelectorAll('video'));
+                if (videos.length === 0) return false;
+                window.__winInstagram_storyPaused = true;
+                videos.forEach(v => { try { v.pause(); } catch(e) {} });
+                return true;
+            } catch(e) { return false; }
+        };
+
+        window.__winInstagram.storyResume = function() {
+            try {
+                const videos = Array.from(document.querySelectorAll('video'));
+                if (videos.length === 0) return false;
+                window.__winInstagram_storyPaused = false;
+                videos.forEach(v => {
+                    try {
+                        const p = v.play();
+                        if (p && typeof p.catch === 'function') p.catch(() => {});
+                    } catch(e) {}
+                });
+                return true;
+            } catch(e) { return false; }
+        };
+
+        // Steps to the next or previous story item and reports where it landed. Unlike the reel
+        // handlers this never falls back to scrolling, because a story has no scroll.
+        window.__winInstagram.storyNext = function() {
+            try {
+                const root = storyRoot();
+                if (!root) return false;
+                const btn = root.querySelector('button[aria-label=""Next""], div[role=""button""][aria-label=""Next""]');
+                if (btn) { triggerClick(btn); return true; }
+                const el = document.elementFromPoint(window.innerWidth * 0.85, window.innerHeight * 0.5);
+                if (el) {
+                    el.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, clientX: window.innerWidth * 0.85, clientY: window.innerHeight * 0.5 }));
+                    return true;
+                }
+                return false;
+            } catch(e) { return false; }
+        };
+
+        window.__winInstagram.storyPrev = function() {
+            try {
+                const root = storyRoot();
+                if (!root) return false;
+                const btn = root.querySelector('button[aria-label=""Previous""], div[role=""button""][aria-label=""Previous""]');
+                if (btn) { triggerClick(btn); return true; }
+                const el = document.elementFromPoint(window.innerWidth * 0.15, window.innerHeight * 0.5);
+                if (el) {
+                    el.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, clientX: window.innerWidth * 0.15, clientY: window.innerHeight * 0.5 }));
+                    return true;
+                }
+                return false;
+            } catch(e) { return false; }
+        };
+
+        // Names of the controls the native panels drive, checked against the live page so the app
+        // can warn honestly when Instagram changes its markup and a control stops working.
+        window.__winInstagram.probeSelectors = function() {
+            try {
+                const info = getActiveReel();
+                const root = (info && info.container) ? info.container : (document.querySelector('article') || document.body);
+                const buttons = Array.from(root.querySelectorAll('button, div[role=""button""]'));
+                const hasLabelled = (wanted) => buttons.some(b => {
+                    const a = (b.getAttribute('aria-label') || '').trim().toLowerCase();
+                    return a === wanted || a.startsWith(wanted);
+                });
+
+                return {
+                    likeButton: !!findReelLikeButton(root),
+                    commentButton: !!findReelCommentButton(root),
+                    videoElement: document.querySelectorAll('video').length > 0,
+                    carouselNext: hasLabelled('next'),
+                    carouselPrevious: hasLabelled('previous'),
+                    messageComposer: !!findDirectComposer(),
+                    storyNext: !!(document.querySelector('button[aria-label=""Next""], div[role=""button""][aria-label=""Next""]')),
+                    csrfToken: !!window.__winInstagram.getCsrfToken()
+                };
+            } catch(e) { return null; }
+        };
+
+        // The direct URLs of whatever is on screen plus its readable text, so the app can save a
+        // real copy of the media the user is looking at.
+        window.__winInstagram.activeMediaUrls = function() {
+            try {
+                const info = getActiveReel();
+                const videos = Array.from(document.querySelectorAll('video'));
+                let videoUrl = '';
+                if (videos.length > 0) videoUrl = videos[0].currentSrc || videos[0].src || '';
+
+                const root = (info && info.container) ? info.container : (document.querySelector('article') || document.body);
+                let imageUrl = '';
+                const imgs = Array.from(root.querySelectorAll('img[src]'));
+                for (const img of imgs) {
+                    const src = img.getAttribute('src') || '';
+                    const alt = img.getAttribute('alt') || '';
+                    if (src && !/profile picture/i.test(alt) && !src.startsWith('data:')) { imageUrl = src; break; }
+                }
+
+                let altText = '';
+                try { altText = window.__winInstagram.readActiveAltText(); } catch(e) {}
+
+                let caption = '';
+                const capEl = root.querySelector('h1') || root.querySelector('div[dir=""auto""] span');
+                if (capEl) caption = (capEl.innerText || '').trim();
+
+                let username = '';
+                const link = root.querySelector('header a[href^=""/""]');
+                if (link) {
+                    const m = (link.getAttribute('href') || '').match(/^\/([a-zA-Z0-9._]+)\/?$/);
+                    if (m && m[1]) username = m[1];
+                }
+
+                return {
+                    videoUrl: videoUrl,
+                    imageUrl: imageUrl,
+                    altText: altText,
+                    caption: caption,
+                    username: username,
+                    pageUrl: window.location.href
+                };
+            } catch(e) { return null; }
+        };
+
         window.__winInstagram.sync = syncState;
 
         document.addEventListener('play', (e) => {
@@ -890,6 +1193,8 @@ public class InstagramBridgeService
                             FormattedLikes = data.TryGetProperty("formattedLikes", out var lProp) ? lProp.GetString() ?? "" : "",
                             CommentsCount = cCount,
                             IsLiked = data.TryGetProperty("isLiked", out var likedProp) && likedProp.GetBoolean(),
+                            AltText = data.TryGetProperty("altText", out var altProp) ? altProp.GetString() ?? "" : "",
+                            HasCaptions = data.TryGetProperty("hasCaptions", out var capProp) && capProp.ValueKind == JsonValueKind.True,
                         };
 
                         bool isPlaying = data.TryGetProperty("isPlaying", out var pProp) && pProp.GetBoolean();
@@ -901,6 +1206,10 @@ public class InstagramBridgeService
                             ActiveReelChanged?.Invoke(reel, isPlaying, isMuted, vol);
                         });
                     }
+                }
+                else if (msgType == "API_JSON")
+                {
+                    HandleApiJson(root);
                 }
                 else if (msgType == "COMMENTS_LOADED")
                 {
@@ -942,6 +1251,87 @@ public class InstagramBridgeService
         catch (Exception ex)
         {
             AppLogger.Error("BRIDGE", "Error processing web message", ex);
+        }
+    }
+
+    /// <summary>
+    /// Routes a raw API body fetched from inside the page to the parser for its tag, so every
+    /// native panel is filled from Instagram's own data rather than from page scraping.
+    /// </summary>
+    private void HandleApiJson(JsonElement root)
+    {
+        var tag = root.TryGetProperty("tag", out var tagProp) ? tagProp.GetString() ?? string.Empty : string.Empty;
+        var body = root.TryGetProperty("body", out var bodyProp) ? bodyProp.GetString() ?? string.Empty : string.Empty;
+        var url = root.TryGetProperty("url", out var urlProp) ? urlProp.GetString() ?? string.Empty : string.Empty;
+        var status = root.TryGetProperty("status", out var statusProp) && statusProp.ValueKind == JsonValueKind.Number
+            ? statusProp.GetInt32()
+            : 0;
+
+        if (status < 200 || status >= 300 || string.IsNullOrWhiteSpace(body))
+        {
+            AppLogger.Warn("API", $"Instagram returned status {status} for {tag} ({url}).");
+            if (tag == "activity") _dispatcher?.Invoke(() => ActivityReceived?.Invoke(new List<ActivityItem>()));
+            else if (tag == "saved") _dispatcher?.Invoke(() => SavedPostsReceived?.Invoke(new List<FeedPost>()));
+            else if (tag == "collections") _dispatcher?.Invoke(() => CollectionsReceived?.Invoke(new List<SavedCollection>()));
+            else if (tag == "search") _dispatcher?.Invoke(() => SearchReceived?.Invoke(new List<SearchResult>()));
+            return;
+        }
+
+        switch (tag)
+        {
+            case "stories":
+            {
+                var stories = InstagramParser.ParseStories(body);
+                if (stories.Count > 0)
+                {
+                    AppLogger.Success("PARSER", $"Scan found {stories.Count} story tray entries!");
+                    _dispatcher?.Invoke(() => StoriesReceived?.Invoke(stories));
+                }
+                break;
+            }
+
+            case "profile":
+            {
+                var profile = InstagramParser.ParseProfile(body);
+                if (profile != null && !string.IsNullOrWhiteSpace(profile.Username))
+                {
+                    // Recent posts travel in the same payload, so the profile view can list them.
+                    var profilePosts = InstagramParser.ParseSavedPosts(body);
+                    AppLogger.Success("PARSER", $"Scan found profile for @{profile.Username} with {profilePosts.Count} posts.");
+                    _dispatcher?.Invoke(() => ProfileReceived?.Invoke(profile, profilePosts));
+                }
+                break;
+            }
+
+            case "saved":
+            {
+                var posts = InstagramParser.ParseSavedPosts(body);
+                AppLogger.Success("PARSER", $"Scan found {posts.Count} saved posts.");
+                _dispatcher?.Invoke(() => SavedPostsReceived?.Invoke(posts));
+                break;
+            }
+
+            case "collections":
+            {
+                var collections = InstagramParser.ParseCollections(body);
+                _dispatcher?.Invoke(() => CollectionsReceived?.Invoke(collections));
+                break;
+            }
+
+            case "activity":
+            {
+                var items = InstagramParser.ParseActivity(body);
+                AppLogger.Success("PARSER", $"Scan found {items.Count} activity entries.");
+                _dispatcher?.Invoke(() => ActivityReceived?.Invoke(items));
+                break;
+            }
+
+            case "search":
+            {
+                var results = InstagramParser.ParseSearch(body);
+                _dispatcher?.Invoke(() => SearchReceived?.Invoke(results));
+                break;
+            }
         }
     }
 
@@ -1051,10 +1441,12 @@ public class InstagramBridgeService
 
         // Only inspect the payload shapes we actually know how to parse.
         bool isDirect = uri.Contains("direct_v2");
-        bool isFeed = !isDirect && (uri.Contains("/api/v1/feed/timeline/") || uri.Contains("feed/reels_tray") ||
+        // The stories tray is its own surface: it feeds the stories navigator, not the timeline.
+        bool isStories = !isDirect && uri.Contains("reels_tray");
+        bool isFeed = !isDirect && !isStories && (uri.Contains("/api/v1/feed/timeline/") ||
                                     uri.Contains("/api/v1/feed/") || uri.Contains("/graphql/query") || uri.Contains("clips/home"));
         bool isComments = !isDirect && (uri.Contains("/api/v1/comments/") || uri.Contains("edge_media_to_parent_comment") || (uri.Contains("graphql") && uri.Contains("comment")));
-        if (!isFeed && !isComments && !isDirect) return;
+        if (!isFeed && !isComments && !isDirect && !isStories) return;
 
         _ = Task.Run(async () =>
         {
@@ -1085,11 +1477,20 @@ public class InstagramBridgeService
                         _dispatcher?.Invoke(() => DirectMessagesReceived?.Invoke(threadId, messages));
                     }
                 }
+                else if (isStories)
+                {
+                    var stories = InstagramParser.ParseStories(json);
+                    if (stories.Count > 0)
+                    {
+                        AppLogger.Success("PARSER", $"Scan found {stories.Count} story tray entries!");
+                        _dispatcher?.Invoke(() => StoriesReceived?.Invoke(stories));
+                    }
+                }
                 else if (isFeed)
                 {
                     // graphql responses are shared by many features, so only treat the body
                     // as a timeline when it carries timeline-specific markers.
-                    bool looksLikeTimeline = uri.Contains("/api/v1/feed/timeline/") || uri.Contains("feed/reels_tray") ||
+                    bool looksLikeTimeline = uri.Contains("/api/v1/feed/timeline/") ||
                                              uri.Contains("/api/v1/feed/") ||
                                              json.Contains("xdt_api__v1__feed__timeline") ||
                                              json.Contains("media_or_ad") || json.Contains("timeline_feed");
@@ -1281,6 +1682,214 @@ public class InstagramBridgeService
             return false;
         }
     }
+
+    /// <summary>Where a carousel landed after a step, so the caller can announce the real slide.</summary>
+    public record CarouselStepResult(bool Ok, int Index, int Count, string AltText);
+
+    /// <summary>Steps a carousel in the open post by one slide and reports where it landed.</summary>
+    public async Task<CarouselStepResult> StepCarouselAsync(int direction)
+    {
+        var el = await ExecuteJsonAsync($"window.__winInstagram.stepCarousel({(direction >= 0 ? 1 : -1)})");
+        if (el == null) return new CarouselStepResult(false, 0, 0, string.Empty);
+
+        var index = el.Value.TryGetProperty("index", out var i) && i.ValueKind == JsonValueKind.Number ? i.GetInt32() : 0;
+        var count = el.Value.TryGetProperty("count", out var c) && c.ValueKind == JsonValueKind.Number ? c.GetInt32() : 0;
+        var alt = el.Value.TryGetProperty("altText", out var a) && a.ValueKind == JsonValueKind.String
+            ? a.GetString() ?? string.Empty
+            : string.Empty;
+        return new CarouselStepResult(true, index, count, alt);
+    }
+
+    /// <summary>Alt text of whatever media is on screen, or empty when there is none.</summary>
+    public async Task<string> ReadActiveAltTextAsync()
+    {
+        var el = await ExecuteJsonAsync("window.__winInstagram.readActiveAltText()");
+        if (el == null || el.Value.ValueKind != JsonValueKind.String) return string.Empty;
+        return el.Value.GetString() ?? string.Empty;
+    }
+
+    /// <summary>Transcript of the playing video's caption track, or empty when it has none.</summary>
+    public async Task<string> ReadActiveCaptionsAsync()
+    {
+        var el = await ExecuteJsonAsync("window.__winInstagram.readActiveCaptions()");
+        if (el == null || el.Value.ValueKind != JsonValueKind.String) return string.Empty;
+        return el.Value.GetString() ?? string.Empty;
+    }
+
+    /// <summary>
+    /// Runs a page script that returns a value or a promise and parses the JSON WebView2 hands
+    /// back, so callers can report what actually happened rather than assuming success.
+    /// </summary>
+    private async Task<JsonElement?> ExecuteJsonAsync(string expression)
+    {
+        if (_coreWebView2 == null) return null;
+        try
+        {
+            var guarded = $"(async () => {{ if (!window.__winInstagram) {{ {WinInstagramScript} }} return await ({expression}); }})()";
+            var raw = await _coreWebView2.ExecuteScriptAsync(guarded);
+            if (string.IsNullOrWhiteSpace(raw) || raw == "null" || raw == "undefined") return null;
+
+            using var doc = JsonDocument.Parse(raw);
+            return doc.RootElement.Clone();
+        }
+        catch (Exception ex)
+        {
+            AppLogger.Error("BRIDGE", $"Script failed: {expression}", ex);
+            return null;
+        }
+    }
+
+    // ---- Stories navigator -------------------------------------------------------------------
+
+    /// <summary>What the story viewer is doing right now, as reported by the page itself.</summary>
+    public record StoryState(bool IsStory, bool HasVideo, bool IsPaused, string Username, string AltText);
+
+    /// <summary>The direct media URLs and readable text of whatever is on screen.</summary>
+    public record ActiveMediaInfo(string VideoUrl, string ImageUrl, string AltText, string Caption, string Username, string PageUrl);
+
+    /// <summary>
+    /// The result of checking the page for every control the native panels drive. This exists so
+    /// the app can warn a user out loud when Instagram changes its markup, instead of failing
+    /// silently when a key press stops doing anything.
+    /// </summary>
+    public record SelectorHealthReport(Dictionary<string, bool> Probes)
+    {
+        private static readonly Dictionary<string, string> Labels = new()
+        {
+            ["likeButton"] = "like button",
+            ["commentButton"] = "comments button",
+            ["videoElement"] = "video player",
+            ["carouselNext"] = "carousel next arrow",
+            ["carouselPrevious"] = "carousel previous arrow",
+            ["messageComposer"] = "message box",
+            ["storyNext"] = "story next arrow",
+            ["csrfToken"] = "session token"
+        };
+
+        public List<string> Missing =>
+            Probes.Where(kv => !kv.Value).Select(kv => Labels.TryGetValue(kv.Key, out var l) ? l : kv.Key).ToList();
+
+        public int FoundCount => Probes.Count(kv => kv.Value);
+        public int TotalCount => Probes.Count;
+
+        public string Describe()
+        {
+            if (TotalCount == 0) return "The page could not be checked. Open an Instagram page and try again.";
+            if (Missing.Count == 0) return $"All {TotalCount} controls are present and working.";
+            return $"{FoundCount} of {TotalCount} controls are present. Not found on this page: {string.Join(", ", Missing)}.";
+        }
+    }
+
+    private async Task<bool> ExecuteJsonBoolAsync(string expression)
+    {
+        var el = await ExecuteJsonAsync(expression);
+        return el != null && el.Value.ValueKind == JsonValueKind.True;
+    }
+
+    /// <summary>Reads what the story viewer is showing, so the navigator can report the truth.</summary>
+    public async Task<StoryState> ReadStoryStateAsync()
+    {
+        var el = await ExecuteJsonAsync("window.__winInstagram.storyState()");
+        if (el == null || el.Value.ValueKind != JsonValueKind.Object)
+            return new StoryState(false, false, false, string.Empty, string.Empty);
+
+        var o = el.Value;
+        string ReadString(string name) =>
+            o.TryGetProperty(name, out var p) && p.ValueKind == JsonValueKind.String ? p.GetString() ?? string.Empty : string.Empty;
+        bool ReadBool(string name) =>
+            o.TryGetProperty(name, out var p) && p.ValueKind == JsonValueKind.True;
+
+        return new StoryState(ReadBool("isStory"), ReadBool("hasVideo"), ReadBool("isPaused"), ReadString("username"), ReadString("altText"));
+    }
+
+    /// <summary>Holds the story still. Returns false when there is no story video to pause.</summary>
+    public Task<bool> PauseStoryAsync() => ExecuteJsonBoolAsync("window.__winInstagram.storyPause()");
+
+    /// <summary>Lets a paused story continue.</summary>
+    public Task<bool> ResumeStoryAsync() => ExecuteJsonBoolAsync("window.__winInstagram.storyResume()");
+
+    /// <summary>Steps to the next story item. Returns false when no story is open.</summary>
+    public Task<bool> NextStoryAsync() => ExecuteJsonBoolAsync("window.__winInstagram.storyNext()");
+
+    /// <summary>Steps back to the previous story item. Returns false when no story is open.</summary>
+    public Task<bool> PreviousStoryAsync() => ExecuteJsonBoolAsync("window.__winInstagram.storyPrev()");
+
+    /// <summary>Checks every control the native panels drive and reports which ones are missing.</summary>
+    public async Task<SelectorHealthReport> ProbeSelectorsAsync()
+    {
+        var probes = new Dictionary<string, bool>();
+        var el = await ExecuteJsonAsync("window.__winInstagram.probeSelectors()");
+        if (el != null && el.Value.ValueKind == JsonValueKind.Object)
+        {
+            foreach (var prop in el.Value.EnumerateObject())
+            {
+                probes[prop.Name] = prop.Value.ValueKind == JsonValueKind.True;
+            }
+        }
+        return new SelectorHealthReport(probes);
+    }
+
+    /// <summary>Direct URLs and readable text of the media on screen, or null when there is none.</summary>
+    public async Task<ActiveMediaInfo?> ReadActiveMediaAsync()
+    {
+        var el = await ExecuteJsonAsync("window.__winInstagram.activeMediaUrls()");
+        if (el == null || el.Value.ValueKind != JsonValueKind.Object) return null;
+
+        var o = el.Value;
+        string ReadString(string name) =>
+            o.TryGetProperty(name, out var p) && p.ValueKind == JsonValueKind.String ? p.GetString() ?? string.Empty : string.Empty;
+
+        return new ActiveMediaInfo(
+            ReadString("videoUrl"), ReadString("imageUrl"), ReadString("altText"),
+            ReadString("caption"), ReadString("username"), ReadString("pageUrl"));
+    }
+
+    // ---- Native discovery surfaces ------------------------------------------------------------
+
+    /// <summary>Fetches an Instagram endpoint from inside the page and hands the body to the parser.</summary>
+    public async Task RequestApiAsync(string url, string tag)
+    {
+        if (_coreWebView2 == null || string.IsNullOrWhiteSpace(url)) return;
+        try
+        {
+            var urlJson = JsonSerializer.Serialize(url);
+            var tagJson = JsonSerializer.Serialize(tag);
+            var callScript = $"(async () => {{ if (!window.__winInstagram || typeof window.__winInstagram.apiGet !== 'function') {{ {WinInstagramScript} }} return await window.__winInstagram.apiGet({urlJson}, {tagJson}); }})()";
+            await _coreWebView2.ExecuteScriptAsync(callScript);
+        }
+        catch (Exception ex)
+        {
+            AppLogger.Error("API", $"Failed to fetch {url}", ex);
+        }
+    }
+
+    /// <summary>Loads the stories tray into the stories navigator.</summary>
+    public Task RequestStoriesAsync() =>
+        RequestApiAsync("https://www.instagram.com/api/v1/feed/reels_tray/", "stories");
+
+    /// <summary>Loads a profile by handle into the native profile viewer.</summary>
+    public Task RequestProfileAsync(string username) =>
+        string.IsNullOrWhiteSpace(username)
+            ? Task.CompletedTask
+            : RequestApiAsync($"https://www.instagram.com/api/v1/users/web_profile_info/?username={Uri.EscapeDataString(username)}", "profile");
+
+    /// <summary>Loads the account's saved posts.</summary>
+    public Task RequestSavedPostsAsync() =>
+        RequestApiAsync("https://www.instagram.com/api/v1/feed/saved/posts/", "saved");
+
+    /// <summary>Loads the account's saved collections.</summary>
+    public Task RequestCollectionsAsync() =>
+        RequestApiAsync("https://www.instagram.com/api/v1/collections/list/", "collections");
+
+    /// <summary>Loads the activity feed, which is what drives new-activity announcements.</summary>
+    public Task RequestActivityAsync() =>
+        RequestApiAsync("https://www.instagram.com/api/v1/news/inbox/", "activity");
+
+    /// <summary>Searches accounts, hashtags and posts through Instagram's own search endpoint.</summary>
+    public Task RequestSearchAsync(string query) =>
+        string.IsNullOrWhiteSpace(query)
+            ? Task.CompletedTask
+            : RequestApiAsync($"https://www.instagram.com/api/v1/web/search/topsearch/?context=blended&query={Uri.EscapeDataString(query)}", "search");
 
     /// <summary>Kept for compatibility; delegate likes must be addressed by media id.</summary>
     public Task<bool> LikeMediaAsync(string mediaId) => SetMediaLikedAsync(mediaId, true);

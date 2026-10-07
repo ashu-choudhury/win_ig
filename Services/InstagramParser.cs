@@ -5,6 +5,9 @@ namespace WinInstagram.Services;
 
 public static class InstagramParser
 {
+    /// <summary>Field names Instagram has used for an image's alt text across API versions.</summary>
+    private static readonly string[] AltTextFields = { "accessibility_caption", "alt_text", "alt" };
+
     public static List<FeedPost> ParseTimelineFeed(string json)
     {
         var posts = new List<FeedPost>();
@@ -383,28 +386,6 @@ public static class InstagramParser
                 }
             }
 
-            // Check Stories Tray (reels_tray)
-            if (element.TryGetProperty("tray", out var tray) && tray.ValueKind == JsonValueKind.Array)
-            {
-                foreach (var userTray in tray.EnumerateArray())
-                {
-                    if (userTray.TryGetProperty("items", out var items) && items.ValueKind == JsonValueKind.Array)
-                    {
-                        foreach (var storyItem in items.EnumerateArray())
-                        {
-                            var storyPost = ParseSinglePost(storyItem);
-                            if (storyPost != null && !string.IsNullOrWhiteSpace(storyPost.Id) && !posts.Any(p => p.Id == storyPost.Id))
-                            {
-                                storyPost.Caption = string.IsNullOrWhiteSpace(storyPost.Caption) 
-                                    ? $"[Story by @{storyPost.Username}]" 
-                                    : $"[Story @{storyPost.Username}] {storyPost.Caption}";
-                                posts.Add(storyPost);
-                            }
-                        }
-                    }
-                }
-            }
-
             foreach (var prop in element.EnumerateObject())
             {
                 if (prop.Value.ValueKind is JsonValueKind.Object or JsonValueKind.Array)
@@ -427,11 +408,113 @@ public static class InstagramParser
 
     private static bool IsPostObject(JsonElement el)
     {
+        // Stories carry expiring_at and live in their own navigator; letting them through here
+        // would fill the timeline with posts that vanish, so they are excluded.
+        if (el.TryGetProperty("expiring_at", out _)) return false;
+
         return el.TryGetProperty("image_versions2", out _) ||
                el.TryGetProperty("carousel_media", out _) ||
                el.TryGetProperty("display_url", out _) ||
                (el.TryGetProperty("media", out var m) && m.ValueKind == JsonValueKind.Object &&
                 (m.TryGetProperty("image_versions2", out _) || m.TryGetProperty("carousel_media", out _) || m.TryGetProperty("display_url", out _)));
+    }
+
+    /// <summary>
+    /// Parses the stories tray (reels_tray) into navigable story entries. Tray payloads appear
+    /// both as a flat tray array and as a graphql connection with edges, so both shapes are read.
+    /// </summary>
+    public static List<StoryItem> ParseStories(string json)
+    {
+        var stories = new List<StoryItem>();
+        try
+        {
+            using var doc = JsonDocument.Parse(json);
+            ScanForStories(doc.RootElement, stories);
+        }
+        catch (Exception ex)
+        {
+            AppLogger.Error("PARSER", "Error parsing stories tray JSON", ex);
+        }
+        return stories;
+    }
+
+    private static void ScanForStories(JsonElement element, List<StoryItem> stories)
+    {
+        if (element.ValueKind == JsonValueKind.Object)
+        {
+            var story = ParseSingleStory(element);
+            if (story != null && !string.IsNullOrWhiteSpace(story.Username) &&
+                !stories.Any(s => s.Username == story.Username))
+            {
+                stories.Add(story);
+            }
+
+            foreach (var prop in element.EnumerateObject())
+            {
+                if (prop.Value.ValueKind is JsonValueKind.Object or JsonValueKind.Array)
+                {
+                    ScanForStories(prop.Value, stories);
+                }
+            }
+        }
+        else if (element.ValueKind == JsonValueKind.Array)
+        {
+            foreach (var item in element.EnumerateArray())
+            {
+                if (item.ValueKind is JsonValueKind.Object or JsonValueKind.Array)
+                {
+                    ScanForStories(item, stories);
+                }
+            }
+        }
+    }
+
+    private static StoryItem? ParseSingleStory(JsonElement element)
+    {
+        try
+        {
+            // Only a tray entry has both a user and a story item array; a plain post does not.
+            if (!element.TryGetProperty("user", out var user) || user.ValueKind != JsonValueKind.Object) return null;
+            if (!element.TryGetProperty("items", out var items) || items.ValueKind != JsonValueKind.Array) return null;
+
+            var username = user.TryGetProperty("username", out var u) ? u.GetString() ?? string.Empty : string.Empty;
+            if (string.IsNullOrWhiteSpace(username)) return null;
+
+            var story = new StoryItem
+            {
+                Id = element.TryGetProperty("id", out var idProp)
+                    ? (idProp.ValueKind == JsonValueKind.String ? idProp.GetString() ?? string.Empty : idProp.ToString())
+                    : string.Empty,
+                Username = username,
+                UserFullName = user.TryGetProperty("full_name", out var f) ? f.GetString() ?? string.Empty : string.Empty,
+                AvatarUrl = user.TryGetProperty("profile_pic_url", out var p) ? p.GetString() ?? string.Empty : string.Empty,
+                ItemCount = items.GetArrayLength()
+            };
+
+            if (element.TryGetProperty("media_count", out var mc) && mc.ValueKind == JsonValueKind.Number)
+                story.ItemCount = Math.Max(story.ItemCount, mc.GetInt32());
+            if (element.TryGetProperty("seen", out var seen) && seen.ValueKind == JsonValueKind.Number)
+                story.IsSeen = seen.GetInt64() > 0;
+            else if (element.TryGetProperty("seen", out var seenBool) && seenBool.ValueKind == JsonValueKind.True)
+                story.IsSeen = true;
+
+            if (story.ItemCount > 0 && items[0].ValueKind == JsonValueKind.Object)
+            {
+                var first = items[0];
+                if (first.TryGetProperty("image_versions2", out var iv) && iv.ValueKind == JsonValueKind.Object &&
+                    iv.TryGetProperty("candidates", out var cands) && cands.ValueKind == JsonValueKind.Array && cands.GetArrayLength() > 0 &&
+                    cands[0].TryGetProperty("url", out var url))
+                {
+                    story.ThumbnailUrl = url.GetString() ?? string.Empty;
+                }
+            }
+
+            return story;
+        }
+        catch
+        {
+            return null;
+        }
     }
 
     private static void ScanForComments(JsonElement element, List<InstagramComment> comments)
@@ -621,11 +704,456 @@ public static class InstagramParser
             else if (element.TryGetProperty("viewer_has_liked", out var viewerLiked) && viewerLiked.ValueKind == JsonValueKind.True)
                 post.IsLiked = true;
 
+            // Alt text is the only description of what the image actually shows, so a screen
+            // reader user has no other way to learn it.
+            foreach (var altName in AltTextFields)
+            {
+                if (element.TryGetProperty(altName, out var altProp) && altProp.ValueKind == JsonValueKind.String)
+                {
+                    var alt = altProp.GetString();
+                    if (!string.IsNullOrWhiteSpace(alt))
+                    {
+                        post.AltText = alt!.Trim();
+                        break;
+                    }
+                }
+            }
+
+            // Carousel slide count, so the list can say "carousel of five" and the panel can step it.
+            if (element.TryGetProperty("carousel_media", out var carousel) && carousel.ValueKind == JsonValueKind.Array)
+            {
+                post.CarouselCount = carousel.GetArrayLength();
+            }
+            else if (element.TryGetProperty("carousel_media_count", out var carouselCountProp) && carouselCountProp.ValueKind == JsonValueKind.Number)
+            {
+                post.CarouselCount = carouselCountProp.GetInt32();
+            }
+
             return post;
         }
         catch
         {
             return null;
+        }
+    }
+
+    /// <summary>
+    /// Parses a web_profile_info payload into a readable profile card. The same shape is nested
+    /// under data.user on graphql responses, so the scan looks for the innermost object that has a
+    /// username and any of the profile-only counters.
+    /// </summary>
+    public static ProfileCard? ParseProfile(string json)
+    {
+        try
+        {
+            using var doc = JsonDocument.Parse(json);
+            var card = ScanForProfile(doc.RootElement);
+            if (card != null && string.IsNullOrWhiteSpace(card.Username))
+            {
+                // Older payloads keep the username inside data.user rather than at the top level.
+                if (doc.RootElement.TryGetProperty("data", out var data) &&
+                    data.TryGetProperty("user", out var user))
+                {
+                    card.Username = user.TryGetProperty("username", out var u) ? u.GetString() ?? string.Empty : string.Empty;
+                }
+            }
+            return card;
+        }
+        catch (Exception ex)
+        {
+            AppLogger.Error("PARSER", "Error parsing profile JSON", ex);
+            return null;
+        }
+    }
+
+    private static ProfileCard? ScanForProfile(JsonElement element)
+    {
+        ProfileCard? best = null;
+
+        if (element.ValueKind == JsonValueKind.Object)
+        {
+            var hasUsername = element.TryGetProperty("username", out _);
+            var looksLikeProfile = hasUsername &&
+                (element.TryGetProperty("edge_followed_by", out _) ||
+                 element.TryGetProperty("follower_count", out _) ||
+                 element.TryGetProperty("edge_owner_to_timeline_media", out _) ||
+                 element.TryGetProperty("biography", out _) ||
+                 element.TryGetProperty("is_private", out _) ||
+                 element.TryGetProperty("full_name", out _) ||
+                 element.TryGetProperty("media_count", out _));
+
+            if (looksLikeProfile)
+            {
+                var candidate = BuildProfileCard(element);
+                // Prefer the richest object, which is the one the web page itself renders from.
+                if (candidate != null && (best == null || ScoreProfile(candidate) > ScoreProfile(best)))
+                {
+                    best = candidate;
+                }
+            }
+
+            foreach (var prop in element.EnumerateObject())
+            {
+                if (prop.Value.ValueKind is JsonValueKind.Object or JsonValueKind.Array)
+                {
+                    var nested = ScanForProfile(prop.Value);
+                    if (nested != null && (best == null || ScoreProfile(nested) > ScoreProfile(best)))
+                    {
+                        best = nested;
+                    }
+                }
+            }
+        }
+        else if (element.ValueKind == JsonValueKind.Array)
+        {
+            foreach (var item in element.EnumerateArray())
+            {
+                if (item.ValueKind is JsonValueKind.Object or JsonValueKind.Array)
+                {
+                    var nested = ScanForProfile(item);
+                    if (nested != null && (best == null || ScoreProfile(nested) > ScoreProfile(best)))
+                    {
+                        best = nested;
+                    }
+                }
+            }
+        }
+
+        return best;
+    }
+
+    /// <summary>How much real information a candidate profile object carries.</summary>
+    private static int ScoreProfile(ProfileCard card)
+    {
+        var score = 0;
+        if (!string.IsNullOrWhiteSpace(card.FullName)) score++;
+        if (!string.IsNullOrWhiteSpace(card.Biography)) score++;
+        if (card.FollowerCount > 0) score += 2;
+        if (card.PostCount > 0) score += 2;
+        return score;
+    }
+
+    private static ProfileCard BuildProfileCard(JsonElement element)
+    {
+        var card = new ProfileCard
+        {
+            Username = element.TryGetProperty("username", out var u) ? u.GetString() ?? string.Empty : string.Empty,
+            FullName = element.TryGetProperty("full_name", out var f) ? f.GetString() ?? string.Empty : string.Empty,
+            Biography = element.TryGetProperty("biography", out var b) ? b.GetString() ?? string.Empty : string.Empty,
+            ExternalUrl = element.TryGetProperty("external_url", out var e) ? e.GetString() ?? string.Empty : string.Empty,
+            ProfilePicUrl = element.TryGetProperty("profile_pic_url_hd", out var ph) ? ph.GetString() ?? string.Empty
+                : element.TryGetProperty("profile_pic_url", out var p) ? p.GetString() ?? string.Empty : string.Empty,
+            IsPrivate = element.TryGetProperty("is_private", out var ip) && ip.ValueKind == JsonValueKind.True,
+            IsVerified = element.TryGetProperty("is_verified", out var iv) && iv.ValueKind == JsonValueKind.True,
+            IsBusiness = element.TryGetProperty("is_business_account", out var ib) && ib.ValueKind == JsonValueKind.True,
+            BusinessCategory = element.TryGetProperty("business_category_name", out var bc) ? bc.GetString() ?? string.Empty
+                : element.TryGetProperty("category_name", out var cn) ? cn.GetString() ?? string.Empty : string.Empty
+        };
+
+        card.FollowerCount = ReadCount(element, "edge_followed_by") ?? ReadCount(element, "follower_count") ?? 0;
+        card.FollowingCount = ReadCount(element, "edge_follow") ?? ReadCount(element, "following_count") ?? 0;
+        card.PostCount = ReadCount(element, "edge_owner_to_timeline_media") ?? ReadCount(element, "media_count") ?? 0;
+
+        return card;
+    }
+
+    /// <summary>Reads the count of either a {"count": n} edge object or a plain number property.</summary>
+    private static long? ReadCount(JsonElement parent, string propertyName)
+    {
+        if (!parent.TryGetProperty(propertyName, out var value)) return null;
+        if (value.ValueKind == JsonValueKind.Number && value.TryGetInt64(out var n)) return n;
+        if (value.ValueKind == JsonValueKind.Object && value.TryGetProperty("count", out var c) && c.ValueKind == JsonValueKind.Number)
+            return c.GetInt64();
+        return null;
+    }
+
+    /// <summary>Parses a saved-posts payload. Saved items are ordinary post shapes, so the post scanner is reused.</summary>
+    public static List<FeedPost> ParseSavedPosts(string json)
+    {
+        var posts = new List<FeedPost>();
+        try
+        {
+            using var doc = JsonDocument.Parse(json);
+            ScanForPosts(doc.RootElement, posts);
+        }
+        catch (Exception ex)
+        {
+            AppLogger.Error("PARSER", "Error parsing saved posts JSON", ex);
+        }
+        return posts;
+    }
+
+    /// <summary>Parses the account's saved collections into named, countable entries.</summary>
+    public static List<SavedCollection> ParseCollections(string json)
+    {
+        var collections = new List<SavedCollection>();
+        try
+        {
+            using var doc = JsonDocument.Parse(json);
+            ScanForCollections(doc.RootElement, collections);
+        }
+        catch (Exception ex)
+        {
+            AppLogger.Error("PARSER", "Error parsing collections JSON", ex);
+        }
+        return collections;
+    }
+
+    private static void ScanForCollections(JsonElement element, List<SavedCollection> collections)
+    {
+        if (element.ValueKind == JsonValueKind.Object)
+        {
+            var hasId = element.TryGetProperty("collection_id", out var collectionId) ||
+                        element.TryGetProperty("collection_pk", out collectionId);
+            var hasName = element.TryGetProperty("collection_name", out var collectionName) ||
+                          element.TryGetProperty("name", out collectionName);
+
+            if (hasName && collectionName.ValueKind == JsonValueKind.String)
+            {
+                var name = collectionName.GetString() ?? string.Empty;
+                if (!string.IsNullOrWhiteSpace(name) && !collections.Any(c => c.Name.Equals(name, StringComparison.OrdinalIgnoreCase)))
+                {
+                    var collection = new SavedCollection
+                    {
+                        Name = name,
+                        Id = hasId
+                            ? (collectionId.ValueKind == JsonValueKind.String ? collectionId.GetString() ?? string.Empty : collectionId.ToString())
+                            : string.Empty
+                    };
+
+                    if (element.TryGetProperty("collection_media_count", out var cmc) && cmc.ValueKind == JsonValueKind.Number)
+                        collection.ItemCount = cmc.GetInt32();
+                    else if (element.TryGetProperty("media_count", out var mc) && mc.ValueKind == JsonValueKind.Number)
+                        collection.ItemCount = mc.GetInt32();
+
+                    collections.Add(collection);
+                }
+            }
+
+            foreach (var prop in element.EnumerateObject())
+            {
+                if (prop.Value.ValueKind is JsonValueKind.Object or JsonValueKind.Array)
+                {
+                    ScanForCollections(prop.Value, collections);
+                }
+            }
+        }
+        else if (element.ValueKind == JsonValueKind.Array)
+        {
+            foreach (var item in element.EnumerateArray())
+            {
+                if (item.ValueKind is JsonValueKind.Object or JsonValueKind.Array)
+                {
+                    ScanForCollections(item, collections);
+                }
+            }
+        }
+    }
+
+    /// <summary>
+    /// Parses Instagram's activity feed (news/inbox) into sentences. Every "story" is one person
+    /// or group of people acting on you, with optional args describing the target post.
+    /// </summary>
+    public static List<ActivityItem> ParseActivity(string json)
+    {
+        var items = new List<ActivityItem>();
+        try
+        {
+            using var doc = JsonDocument.Parse(json);
+            ScanForActivity(doc.RootElement, items);
+        }
+        catch (Exception ex)
+        {
+            AppLogger.Error("PARSER", "Error parsing activity JSON", ex);
+        }
+        return items;
+    }
+
+    private static void ScanForActivity(JsonElement element, List<ActivityItem> items)
+    {
+        if (element.ValueKind == JsonValueKind.Object)
+        {
+            if (element.TryGetProperty("story_type", out var storyType) && storyType.ValueKind == JsonValueKind.String)
+            {
+                var item = BuildActivityItem(element, storyType.GetString() ?? string.Empty);
+                if (item != null && !items.Any(i => i.Id == item.Id))
+                {
+                    items.Add(item);
+                }
+            }
+
+            foreach (var prop in element.EnumerateObject())
+            {
+                if (prop.Value.ValueKind is JsonValueKind.Object or JsonValueKind.Array)
+                {
+                    ScanForActivity(prop.Value, items);
+                }
+            }
+        }
+        else if (element.ValueKind == JsonValueKind.Array)
+        {
+            foreach (var entry in element.EnumerateArray())
+            {
+                if (entry.ValueKind is JsonValueKind.Object or JsonValueKind.Array)
+                {
+                    ScanForActivity(entry, items);
+                }
+            }
+        }
+    }
+
+    private static ActivityItem? BuildActivityItem(JsonElement element, string storyType)
+    {
+        try
+        {
+            var item = new ActivityItem
+            {
+                Type = storyType,
+                Id = element.TryGetProperty("pk", out var pk)
+                    ? pk.ToString()
+                    : element.TryGetProperty("id", out var id)
+                        ? (id.ValueKind == JsonValueKind.String ? id.GetString() ?? string.Empty : id.ToString())
+                        : Guid.NewGuid().ToString("N")
+            };
+
+            if (element.TryGetProperty("timestamp", out var ts)) item.Timestamp = FormatTimestamp(ts);
+
+            // The headline text is sometimes a plain string and sometimes a styled text object.
+            if (element.TryGetProperty("args", out var args) && args.ValueKind == JsonValueKind.Object)
+            {
+                if (args.TryGetProperty("text", out var t) && t.ValueKind == JsonValueKind.String)
+                    item.Text = t.GetString() ?? string.Empty;
+                else if (args.TryGetProperty("comment", out var comment) && comment.ValueKind == JsonValueKind.String)
+                    item.Text = comment.GetString() ?? string.Empty;
+
+                if (string.IsNullOrWhiteSpace(item.Text) &&
+                    args.TryGetProperty("rich_text", out var rich) && rich.ValueKind == JsonValueKind.String)
+                    item.Text = rich.GetString() ?? string.Empty;
+
+                if (args.TryGetProperty("media", out var media) && media.ValueKind == JsonValueKind.Array && media.GetArrayLength() > 0)
+                {
+                    var first = media[0];
+                    if (first.ValueKind == JsonValueKind.Object && first.TryGetProperty("code", out var code) && code.ValueKind == JsonValueKind.String)
+                        item.MediaCode = code.GetString() ?? string.Empty;
+                }
+
+                if (args.TryGetProperty("profile_id", out var profileId))
+                    item.Username = profileId.ToString();
+            }
+
+            // Resolve the acting username through the nested user object, falling back to the id.
+            if (element.TryGetProperty("user", out var user) && user.ValueKind == JsonValueKind.Object)
+            {
+                if (user.TryGetProperty("username", out var un) && un.ValueKind == JsonValueKind.String && !string.IsNullOrWhiteSpace(un.GetString()))
+                    item.Username = un.GetString() ?? string.Empty;
+                if (user.TryGetProperty("profile_pic_url", out var pic) && pic.ValueKind == JsonValueKind.String)
+                    item.AvatarUrl = pic.GetString() ?? string.Empty;
+            }
+
+            if (!string.IsNullOrWhiteSpace(item.Username) && item.Username.All(char.IsDigit))
+            {
+                // A numeric id is not something to read out; say someone instead.
+                item.Username = string.Empty;
+            }
+
+            return item;
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// Parses a web search response. Accounts come from the topsearch shape and posts are picked
+    /// up by the ordinary post scanner, so "search" covers both people and content.
+    /// </summary>
+    public static List<SearchResult> ParseSearch(string json)
+    {
+        var results = new List<SearchResult>();
+        try
+        {
+            using var doc = JsonDocument.Parse(json);
+            ScanForSearchResults(doc.RootElement, results);
+
+            var posts = new List<FeedPost>();
+            ScanForPosts(doc.RootElement, posts);
+            foreach (var post in posts.Take(15))
+            {
+                if (results.Any(r => r.Kind == "post" && r.MediaCode == post.MediaCode && !string.IsNullOrWhiteSpace(post.MediaCode))) continue;
+                results.Add(new SearchResult
+                {
+                    Kind = "post",
+                    Username = post.Username,
+                    MediaCode = post.MediaCode,
+                    Subtitle = string.IsNullOrWhiteSpace(post.Caption) ? string.Empty : post.Caption
+                });
+            }
+        }
+        catch (Exception ex)
+        {
+            AppLogger.Error("PARSER", "Error parsing search JSON", ex);
+        }
+        return results;
+    }
+
+    private static void ScanForSearchResults(JsonElement element, List<SearchResult> results)
+    {
+        if (element.ValueKind == JsonValueKind.Object)
+        {
+            // topsearch wraps each account in a {user:{...}} entry.
+            if (element.TryGetProperty("user", out var user) && user.ValueKind == JsonValueKind.Object &&
+                user.TryGetProperty("username", out var un) && un.ValueKind == JsonValueKind.String)
+            {
+                var username = un.GetString() ?? string.Empty;
+                if (!string.IsNullOrWhiteSpace(username) && !results.Any(r => r.Kind == "account" && r.Username == username))
+                {
+                    results.Add(new SearchResult
+                    {
+                        Kind = "account",
+                        Username = username,
+                        FullName = user.TryGetProperty("full_name", out var fn) ? fn.GetString() ?? string.Empty : string.Empty,
+                        ProfilePicUrl = user.TryGetProperty("profile_pic_url", out var pic) ? pic.GetString() ?? string.Empty : string.Empty,
+                        IsVerified = user.TryGetProperty("is_verified", out var iv) && iv.ValueKind == JsonValueKind.True,
+                        IsPrivate = user.TryGetProperty("is_private", out var ip) && ip.ValueKind == JsonValueKind.True
+                    });
+                }
+            }
+
+            // Hashtag hits appear as {hashtag:{name:...}} or as {name:...} with a media_count.
+            if (element.TryGetProperty("hashtag", out var hashtag) && hashtag.ValueKind == JsonValueKind.Object &&
+                hashtag.TryGetProperty("name", out var tagName) && tagName.ValueKind == JsonValueKind.String)
+            {
+                var tag = tagName.GetString() ?? string.Empty;
+                if (!string.IsNullOrWhiteSpace(tag) && !results.Any(r => r.Kind == "hashtag" && r.Tag == tag))
+                {
+                    var mediaCount = ReadCount(hashtag, "media_count");
+                    results.Add(new SearchResult
+                    {
+                        Kind = "hashtag",
+                        Tag = tag,
+                        Subtitle = mediaCount.HasValue ? $"{mediaCount.Value:N0} posts" : string.Empty
+                    });
+                }
+            }
+
+            foreach (var prop in element.EnumerateObject())
+            {
+                if (prop.Value.ValueKind is JsonValueKind.Object or JsonValueKind.Array)
+                {
+                    ScanForSearchResults(prop.Value, results);
+                }
+            }
+        }
+        else if (element.ValueKind == JsonValueKind.Array)
+        {
+            foreach (var item in element.EnumerateArray())
+            {
+                if (item.ValueKind is JsonValueKind.Object or JsonValueKind.Array)
+                {
+                    ScanForSearchResults(item, results);
+                }
+            }
         }
     }
 }

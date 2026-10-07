@@ -2,6 +2,7 @@ using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
 using WinInstagram.Models;
+using WinInstagram.Services;
 using WinInstagram.ViewModels;
 
 namespace WinInstagram.Views;
@@ -16,6 +17,12 @@ public partial class HomeView : UserControl
 
     /// <summary>Raised when the user asks for a fresh timeline; the shell reloads the engine.</summary>
     public event Action? RefreshRequested;
+
+    /// <summary>Raised when the user shares the selected post; the shell copies the rich text.</summary>
+    public event Action? ShareRequested;
+
+    /// <summary>Raised when the user asks for a spoken description of the selected post.</summary>
+    public event Action? DescribeRequested;
 
     public HomeView()
     {
@@ -35,22 +42,67 @@ public partial class HomeView : UserControl
         Keyboard.Focus(PostsList);
     }
 
+    /// <summary>
+    /// Brings the selected post into view without taking focus, so restoring a reading position
+    /// does not move the keyboard away from whatever the user was doing.
+    /// </summary>
+    public void ScrollToSelected()
+    {
+        if (PostsList.SelectedItem != null)
+        {
+            PostsList.ScrollIntoView(PostsList.SelectedItem);
+        }
+    }
+
     private void UserControl_KeyDown(object sender, KeyEventArgs e)
     {
+        // Every letter key is read from the user's own map, so a screen reader user who switched to
+        // the modified preset keeps their plain letters to themselves here too.
+        var shortcuts = ShortcutService.Instance;
+
+        if (shortcuts.Matches(e.Key, Keyboard.Modifiers, "like"))
+        {
+            _ = ViewModel.ToggleLikeCurrentAsync();
+            e.Handled = true;
+            return;
+        }
+
+        if (shortcuts.Matches(e.Key, Keyboard.Modifiers, "share"))
+        {
+            ShareRequested?.Invoke();
+            e.Handled = true;
+            return;
+        }
+
+        if (shortcuts.Matches(e.Key, Keyboard.Modifiers, "refresh"))
+        {
+            RefreshRequested?.Invoke();
+            e.Handled = true;
+            return;
+        }
+
+        if (shortcuts.Matches(e.Key, Keyboard.Modifiers, "describe"))
+        {
+            DescribeRequested?.Invoke();
+            e.Handled = true;
+            return;
+        }
+
         switch (e.Key)
         {
-            case Key.L:
-                _ = ViewModel.ToggleLikeCurrentAsync();
-                e.Handled = true;
-                break;
-
             case Key.Enter:
                 ViewModel.OpenSelectedInEngine();
                 e.Handled = true;
                 break;
 
-            case Key.R:
-                RefreshRequested?.Invoke();
+            // Left and Right belong to the carousel, since Up and Down already read the list.
+            case Key.Left:
+                _ = ViewModel.StepCarouselAsync(-1);
+                e.Handled = true;
+                break;
+
+            case Key.Right:
+                _ = ViewModel.StepCarouselAsync(1);
                 e.Handled = true;
                 break;
         }
