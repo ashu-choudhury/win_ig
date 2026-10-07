@@ -154,7 +154,6 @@ WinInstagram/
 │   ├── AppLogger.cs             # High-speed formatted logger
 │   ├── InstagramBridgeService.cs# WebView2 interop, injected page script, network parsing
 │   ├── InstagramParser.cs       # Timeline / comments / direct_v2 JSON parsing
-│   ├── MediaCacheService.cs     # Media streaming cache
 │   └── UpdateService.cs         # GitHub Releases based self-updater
 ├── Views/
 │   ├── LoginView.xaml           # Isolated Edge WebView2 engine (login, home, reels, DMs)

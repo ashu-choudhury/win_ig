@@ -27,7 +27,6 @@
 
   <ItemGroup>
     <PackageReference Include="Microsoft.Web.WebView2" Version="1.0.4258.31" />
-    <PackageReference Include="WPF.UI" Version="3.4.2.7" />
   </ItemGroup>
 
 </Project>
