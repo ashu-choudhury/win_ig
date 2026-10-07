@@ -1,126 +1,130 @@
 <UserControl x:Class="WinInstagram.Views.MessagesView"
              xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006" 
-             xmlns:d="http://schemas.microsoft.com/expression/blend/2008" 
-             xmlns:local="clr-namespace:WinInstagram.Views"
-             mc:Ignorable="d" 
+             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+             xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+             mc:Ignorable="d"
              Focusable="True"
-             AutomationProperties.Name="Direct Messages View. Left pane contains conversations, right pane contains chat."
-             d:DesignHeight="700" d:DesignWidth="900">
-    <Grid Background="#121212">
-        <Grid.ColumnDefinitions>
-            <ColumnDefinition Width="320" />
-            <ColumnDefinition Width="*" />
-        </Grid.ColumnDefinitions>
+             AutomationProperties.Name="Direct messages panel. The first list contains conversations, the second contains the messages of the open conversation."
+             d:DesignHeight="700" d:DesignWidth="520"
+             KeyDown="UserControl_KeyDown">
+    <Grid Background="#141414">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
 
-        <!-- Left Pane: Conversations List -->
-        <Border Grid.Column="0" Background="#1A1A1A" BorderBrush="#2C2C2C" BorderThickness="0,0,1,0">
-            <Grid>
-                <Grid.RowDefinitions>
-                    <RowDefinition Height="Auto" />
-                    <RowDefinition Height="*" />
-                </Grid.RowDefinitions>
-
-                <Border Grid.Row="0" Padding="16,14" Background="#202020">
-                    <DockPanel>
-                        <TextBlock Text="Direct Messages" Foreground="White" FontSize="18" FontWeight="Bold" DockPanel.Dock="Left" VerticalAlignment="Center" />
-                        <Button Content="Sync" Click="SyncMessages_Click" DockPanel.Dock="Right" 
-                                Background="#333333" Foreground="White" Padding="8,4" 
-                                AutomationProperties.Name="Sync messages" />
-                    </DockPanel>
-                </Border>
-
-                <ListBox Grid.Row="1" ItemsSource="{Binding Conversations}" 
-                         SelectedItem="{Binding SelectedConversation}"
-                         Background="Transparent" BorderThickness="0"
-                         AutomationProperties.Name="Conversations List. Use Up and Down arrow keys to select conversation.">
-                    <ListBox.ItemContainerStyle>
-                        <Style TargetType="ListBoxItem">
-                            <Setter Property="HorizontalContentAlignment" Value="Stretch" />
-                            <Setter Property="Padding" Value="12,10" />
-                            <Setter Property="Margin" Value="4,2" />
-                            <Setter Property="Background" Value="Transparent" />
-                            <Setter Property="AutomationProperties.Name" Value="{Binding AccessibleDescription}" />
-                        </Style>
-                    </ListBox.ItemContainerStyle>
-                    <ListBox.ItemTemplate>
-                        <DataTemplate>
-                            <Border Background="#252526" CornerRadius="6" Padding="10">
-                                <StackPanel>
-                                    <TextBlock Text="{Binding RecipientUsername, StringFormat='@{0}'}" Foreground="White" FontWeight="Bold" FontSize="15" />
-                                    <TextBlock Text="{Binding LastMessage}" Foreground="#AAAAAA" TextTrimming="CharacterEllipsis" Margin="0,3,0,0" />
-                                    <TextBlock Text="{Binding LastTimestamp}" Foreground="#666666" FontSize="11" Margin="0,2,0,0" />
-                                </StackPanel>
-                            </Border>
-                        </DataTemplate>
-                    </ListBox.ItemTemplate>
-                </ListBox>
-            </Grid>
+        <!-- Header -->
+        <Border Grid.Row="0" Background="#1E1E1E" BorderBrush="#2D2D30" BorderThickness="0,0,0,1" Padding="14,10">
+            <DockPanel>
+                <Button x:Name="BtnSyncInbox" DockPanel.Dock="Right" Content="🔄 Sync (R)"
+                        Click="Sync_Click"
+                        Background="#2A2A2A" Foreground="White" Padding="10,4"
+                        AutomationProperties.Name="Reload the direct messages inbox. Press R." />
+                <TextBlock Text="💬 Direct Messages" Foreground="#FFFFFF" FontSize="16" FontWeight="Bold"
+                           VerticalAlignment="Center"
+                           AutomationProperties.HeadingLevel="Level1" />
+            </DockPanel>
         </Border>
 
-        <!-- Right Pane: Active Conversation & Reply Box -->
-        <Border Grid.Column="1" Background="#141414">
-            <Grid>
-                <Grid.RowDefinitions>
-                    <RowDefinition Height="Auto" />
-                    <RowDefinition Height="*" />
-                    <RowDefinition Height="Auto" />
-                </Grid.RowDefinitions>
+        <!-- Conversations -->
+        <ListBox x:Name="ConversationsList" Grid.Row="1"
+                 ItemsSource="{Binding Conversations}"
+                 SelectedItem="{Binding SelectedConversation, Mode=TwoWay}"
+                 Background="Transparent" BorderThickness="0" Margin="8,8,8,0"
+                 ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+                 AutomationProperties.Name="Conversations. Use Up and Down arrows to read them, Enter to open one.">
+            <ListBox.ItemContainerStyle>
+                <Style TargetType="ListBoxItem">
+                    <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+                    <Setter Property="Padding" Value="0" />
+                    <Setter Property="Margin" Value="0,0,0,6" />
+                    <Setter Property="Background" Value="Transparent" />
+                    <Setter Property="FocusVisualStyle" Value="{x:Null}" />
+                    <Setter Property="AutomationProperties.Name" Value="{Binding AccessibleDescription}" />
+                    <Setter Property="AutomationProperties.HelpText" Value="Press Enter to open this conversation in the web view." />
+                </Style>
+            </ListBox.ItemContainerStyle>
+            <ListBox.ItemTemplate>
+                <DataTemplate>
+                    <Border Background="#1E1E1E" CornerRadius="8" Padding="12" BorderBrush="#2A2A2A" BorderThickness="1">
+                        <StackPanel>
+                            <DockPanel>
+                                <TextBlock Text="{Binding DisplayName, StringFormat='@{0}'}" Foreground="#4EC9B0"
+                                           FontWeight="Bold" FontSize="14" DockPanel.Dock="Left" />
+                                <TextBlock Text="{Binding UnreadText}" Foreground="#FFC850" FontSize="11"
+                                           FontWeight="Bold" HorizontalAlignment="Right" VerticalAlignment="Center" />
+                            </DockPanel>
+                            <TextBlock Text="{Binding LastMessage}" Foreground="#CCCCCC" FontSize="12"
+                                       TextTrimming="CharacterEllipsis" Margin="0,4,0,0" />
+                            <TextBlock Text="{Binding LastTimestamp}" Foreground="#777777" FontSize="10" Margin="0,2,0,0" />
+                        </StackPanel>
+                    </Border>
+                </DataTemplate>
+            </ListBox.ItemTemplate>
+        </ListBox>
 
-                <!-- Conversation Header -->
-                <Border Grid.Row="0" Background="#1F1F1F" Padding="16,12">
-                    <TextBlock Text="{Binding SelectedConversation.RecipientUsername, StringFormat='Chat with @{0}', FallbackValue='Select a conversation to start reading'}" 
-                               Foreground="White" FontSize="16" FontWeight="Bold" 
-                               AutomationProperties.Name="Active Chat Header" />
-                </Border>
+        <!-- Thread header -->
+        <Border Grid.Row="2" Background="#181818" Padding="14,8">
+            <DockPanel>
+                <TextBlock Text="{Binding MessageCountText}" Foreground="#888888" FontSize="11"
+                           DockPanel.Dock="Right" VerticalAlignment="Center" />
+                <TextBlock Text="{Binding ThreadHeader}" Foreground="#FFFFFF" FontSize="13" FontWeight="Bold"
+                           AutomationProperties.HeadingLevel="Level2" />
+            </DockPanel>
+        </Border>
 
-                <!-- Messages Stream -->
-                <ListBox Grid.Row="1" ItemsSource="{Binding SelectedConversation.Messages}" 
-                         Background="Transparent" BorderThickness="0" Margin="12"
-                         AutomationProperties.Name="Messages stream. Use Up and Down arrow keys to read messages.">
-                    <ListBox.ItemContainerStyle>
-                        <Style TargetType="ListBoxItem">
-                            <Setter Property="HorizontalContentAlignment" Value="Stretch" />
-                            <Setter Property="Margin" Value="0,4" />
-                            <Setter Property="AutomationProperties.Name" Value="{Binding AccessibleText}" />
-                        </Style>
-                    </ListBox.ItemContainerStyle>
-                    <ListBox.ItemTemplate>
-                        <DataTemplate>
-                            <Border Background="#2A2A2A" CornerRadius="8" Padding="12,8" MaxWidth="500" HorizontalAlignment="Left">
-                                <StackPanel>
-                                    <TextBlock Text="{Binding SenderUsername}" Foreground="#4EC9B0" FontSize="12" FontWeight="Bold" />
-                                    <TextBlock Text="{Binding Text}" Foreground="White" FontSize="14" TextWrapping="Wrap" Margin="0,2" />
-                                    <TextBlock Text="{Binding Timestamp}" Foreground="#888888" FontSize="10" HorizontalAlignment="Right" />
-                                </StackPanel>
-                            </Border>
-                        </DataTemplate>
-                    </ListBox.ItemTemplate>
-                </ListBox>
+        <!-- Messages in the open thread -->
+        <ListBox x:Name="MessagesList" Grid.Row="3"
+                 ItemsSource="{Binding SelectedConversation.Messages}"
+                 Background="Transparent" BorderThickness="0" Margin="8"
+                 ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+                 AutomationProperties.Name="Messages in the open conversation. Use Up and Down arrows to read them.">
+            <ListBox.ItemContainerStyle>
+                <Style TargetType="ListBoxItem">
+                    <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+                    <Setter Property="Padding" Value="0" />
+                    <Setter Property="Margin" Value="0,0,0,6" />
+                    <Setter Property="Background" Value="Transparent" />
+                    <Setter Property="FocusVisualStyle" Value="{x:Null}" />
+                    <Setter Property="AutomationProperties.Name" Value="{Binding AccessibleText}" />
+                </Style>
+            </ListBox.ItemContainerStyle>
+            <ListBox.ItemTemplate>
+                <DataTemplate>
+                    <Border Background="#1E1E1E" CornerRadius="8" Padding="10" BorderBrush="#2A2A2A" BorderThickness="1">
+                        <StackPanel>
+                            <TextBlock Text="{Binding SenderUsername}" Foreground="#4EC9B0" FontSize="11" FontWeight="Bold" />
+                            <TextBlock Text="{Binding Text}" Foreground="#E0E0E0" FontSize="13"
+                                       TextWrapping="Wrap" Margin="0,3,0,0" />
+                            <TextBlock Text="{Binding Timestamp}" Foreground="#777777" FontSize="10"
+                                       HorizontalAlignment="Right" Margin="0,3,0,0" />
+                        </StackPanel>
+                    </Border>
+                </DataTemplate>
+            </ListBox.ItemTemplate>
+        </ListBox>
 
-                <!-- Reply Composer -->
-                <Border Grid.Row="2" Background="#1F1F1F" Padding="12">
-                    <Grid>
-                        <Grid.ColumnDefinitions>
-                            <ColumnDefinition Width="*" />
-                            <ColumnDefinition Width="Auto" />
-                        </Grid.ColumnDefinitions>
+        <!-- Reply composer -->
+        <Border Grid.Row="4" Background="#181818" Padding="12,10">
+            <DockPanel>
+                <Button x:Name="BtnSend" DockPanel.Dock="Right" Content="Send (Enter)" Click="Send_Click"
+                        Background="#007ACC" Foreground="White" FontWeight="Bold" Padding="14,7" Margin="8,0,0,0"
+                        AutomationProperties.Name="Send the typed message" />
+                <TextBox x:Name="TxtReply" Padding="10,7" Background="#262626" Foreground="White"
+                         BorderBrush="#444444" KeyDown="TxtReply_KeyDown"
+                         Text="{Binding ReplyText, UpdateSourceTrigger=PropertyChanged}"
+                         AutomationProperties.Name="Write a reply. Press Enter to send." />
+            </DockPanel>
+        </Border>
 
-                        <TextBox x:Name="TxtReply" Grid.Column="0" 
-                                 Text="{Binding ReplyText, UpdateSourceTrigger=PropertyChanged}" 
-                                 KeyDown="TxtReply_KeyDown"
-                                 Background="#2D2D30" Foreground="White" 
-                                 BorderBrush="#444444" Padding="10,8" FontSize="14"
-                                 AutomationProperties.Name="Write a message reply. Press Enter to send." />
-
-                        <Button Grid.Column="1" Content="Send (Enter)" Click="BtnSend_Click" 
-                                Background="#007ACC" Foreground="White" FontWeight="Bold" 
-                                Margin="10,0,0,0" Padding="16,8"
-                                AutomationProperties.Name="Send message button" />
-                    </Grid>
-                </Border>
-            </Grid>
+        <!-- Status -->
+        <Border Grid.Row="5" Background="#1A1A1A" Padding="12,6">
+            <TextBlock Text="{Binding Status}" Foreground="#888888" FontSize="11" TextWrapping="Wrap" />
         </Border>
     </Grid>
 </UserControl>

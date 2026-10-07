@@ -18,9 +18,14 @@ public class InstagramBridgeService
     public bool IsInitialized => _coreWebView2 != null;
     public bool IsLoggedIn { get; private set; }
 
+    /// <summary>The logged-in user's numeric id (ds_user_id cookie), used to attribute DM direction.</summary>
+    public string? CurrentUserId { get; private set; }
+
     public event Action<ReelItem, bool, bool, double>? ActiveReelChanged;
     public event Action<List<FeedPost>>? FeedReceived;
     public event Action<List<InstagramComment>>? CommentsReceived;
+    public event Action<List<DirectConversation>>? ConversationsReceived;
+    public event Action<string, List<DirectMessage>>? DirectMessagesReceived;
     public event Action<bool>? LoginStatusChanged;
     public event Action<string>? StatusMessageUpdated;
 
@@ -710,6 +715,79 @@ public class InstagramBridgeService
             } catch(e) { return false; }
         };
 
+        function findDirectComposer() {
+            const selectors = [
+                'textarea[placeholder*=""Message"" i]',
+                'textarea[aria-label*=""Message"" i]',
+                'div[contenteditable=""true""][role=""textbox""]',
+                'div[contenteditable=""true""][aria-label*=""Message"" i]',
+                'form textarea',
+                'textarea'
+            ];
+            for (const sel of selectors) {
+                const el = document.querySelector(sel);
+                if (el) return el;
+            }
+            return null;
+        }
+
+        window.__winInstagram.getCsrfToken = function() {
+            try {
+                const match = document.cookie.match(/(?:^|;\s*)csrftoken=([^;]+)/);
+                if (match && match[1]) return decodeURIComponent(match[1]);
+                const meta = document.querySelector('meta[name=""csrf-token""]');
+                return meta ? (meta.getAttribute('content') || '') : '';
+            } catch(e) { return ''; }
+        };
+
+        // Likes a feed post through Instagram's own authenticated web endpoint, addressed
+        // by media id. This is the same call the real web client makes and it lets the
+        // native feed report the true outcome instead of assuming success.
+        window.__winInstagram.likeMediaById = async function(mediaId, shouldLike) {
+            try {
+                if (!mediaId) return false;
+                const action = shouldLike ? 'like' : 'unlike';
+                const res = await fetch('/api/v1/web/likes/' + mediaId + '/' + action + '/', {
+                    method: 'POST',
+                    credentials: 'include',
+                    headers: {
+                        'x-csrftoken': window.__winInstagram.getCsrfToken(),
+                        'x-ig-app-id': '936619743392459',
+                        'x-requested-with': 'XMLHttpRequest'
+                    }
+                });
+                return res.ok;
+            } catch(e) { return false; }
+        };
+
+        // Types a reply into the engine's DM composer and submits it, so the native
+        // messages panel can send without the user ever touching the web view.
+        window.__winInstagram.sendDirectMessage = function(text) {
+            try {
+                if (!text) return false;
+                const box = findDirectComposer();
+                if (!box) return false;
+                box.focus();
+                if (box.tagName === 'TEXTAREA') {
+                    box.value = text;
+                    box.dispatchEvent(new Event('input', { bubbles: true }));
+                    box.dispatchEvent(new Event('change', { bubbles: true }));
+                } else {
+                    box.innerText = text;
+                    box.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: text }));
+                }
+                box.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true, cancelable: true }));
+                setTimeout(() => {
+                    try {
+                        const btns = Array.from(document.querySelectorAll('button, div[role=""button""]'));
+                        const send = btns.find(b => (b.innerText || '').trim().toLowerCase() === 'send');
+                        if (send) send.click();
+                    } catch(e) {}
+                }, 250);
+                return true;
+            } catch(e) { return false; }
+        };
+
         window.__winInstagram.sync = syncState;
 
         document.addEventListener('play', (e) => {
@@ -915,6 +993,11 @@ public class InstagramBridgeService
             var sessionCookie = allCookies.FirstOrDefault(c => c.Name.Equals("sessionid", StringComparison.OrdinalIgnoreCase) && !string.IsNullOrWhiteSpace(c.Value));
             var userCookie = allCookies.FirstOrDefault(c => c.Name.Equals("ds_user_id", StringComparison.OrdinalIgnoreCase) && !string.IsNullOrWhiteSpace(c.Value));
 
+            if (!string.IsNullOrWhiteSpace(userCookie?.Value))
+            {
+                CurrentUserId = userCookie.Value;
+            }
+
             bool hasSessionCookie = sessionCookie != null;
             bool urlIsNotLogin = !string.IsNullOrEmpty(_coreWebView2.Source) &&
                                  _coreWebView2.Source.Contains("instagram.com") &&
@@ -966,10 +1049,12 @@ public class InstagramBridgeService
         var uri = e.Request.Uri;
         if (!uri.Contains("instagram.com")) return;
 
-        // Strictly parse only Timeline feed & comments payloads
-        bool isFeed = uri.Contains("/api/v1/feed/timeline/") || uri.Contains("feed/reels_tray");
-        bool isComments = uri.Contains("/api/v1/comments/") || uri.Contains("edge_media_to_parent_comment") || (uri.Contains("graphql") && uri.Contains("comment"));
-        if (!isFeed && !isComments) return;
+        // Only inspect the payload shapes we actually know how to parse.
+        bool isDirect = uri.Contains("direct_v2");
+        bool isFeed = !isDirect && (uri.Contains("/api/v1/feed/timeline/") || uri.Contains("feed/reels_tray") ||
+                                    uri.Contains("/api/v1/feed/") || uri.Contains("/graphql/query") || uri.Contains("clips/home"));
+        bool isComments = !isDirect && (uri.Contains("/api/v1/comments/") || uri.Contains("edge_media_to_parent_comment") || (uri.Contains("graphql") && uri.Contains("comment")));
+        if (!isFeed && !isComments && !isDirect) return;
 
         _ = Task.Run(async () =>
         {
@@ -982,8 +1067,34 @@ public class InstagramBridgeService
                 var json = await reader.ReadToEndAsync();
                 if (string.IsNullOrWhiteSpace(json)) return;
 
-                if (isFeed)
+                if (isDirect)
                 {
+                    var conversations = InstagramParser.ParseDirectConversations(json, CurrentUserId);
+                    var messages = InstagramParser.ParseDirectMessages(json, CurrentUserId);
+
+                    if (conversations.Count > 0)
+                    {
+                        AppLogger.Success("PARSER", $"Scan found {conversations.Count} DM conversations!");
+                        _dispatcher?.Invoke(() => ConversationsReceived?.Invoke(conversations));
+                    }
+
+                    if (messages.Count > 0)
+                    {
+                        var threadId = conversations.FirstOrDefault()?.ThreadId ?? string.Empty;
+                        AppLogger.Success("PARSER", $"Scan found {messages.Count} direct messages!");
+                        _dispatcher?.Invoke(() => DirectMessagesReceived?.Invoke(threadId, messages));
+                    }
+                }
+                else if (isFeed)
+                {
+                    // graphql responses are shared by many features, so only treat the body
+                    // as a timeline when it carries timeline-specific markers.
+                    bool looksLikeTimeline = uri.Contains("/api/v1/feed/timeline/") || uri.Contains("feed/reels_tray") ||
+                                             uri.Contains("/api/v1/feed/") ||
+                                             json.Contains("xdt_api__v1__feed__timeline") ||
+                                             json.Contains("media_or_ad") || json.Contains("timeline_feed");
+                    if (!looksLikeTimeline) return;
+
                     var posts = InstagramParser.ParseTimelineFeed(json);
                     if (posts.Count > 0)
                     {
@@ -1125,8 +1236,52 @@ public class InstagramBridgeService
         await ExecuteBridgeMethodAsync("scrapeComments");
     }
 
-    public async Task LikeMediaAsync(string mediaId)
+    /// <summary>
+    /// Likes or unlikes a specific media item (feed post or reel) by id through Instagram's
+    /// authenticated web endpoint. Returns the real outcome so callers can announce the truth
+    /// instead of optimistically claiming success.
+    /// </summary>
+    public async Task<bool> SetMediaLikedAsync(string mediaId, bool shouldLike)
     {
-        await ToggleLikeAsync();
+        if (_coreWebView2 == null || string.IsNullOrWhiteSpace(mediaId)) return false;
+        try
+        {
+            var idJson = JsonSerializer.Serialize(mediaId);
+            var flag = shouldLike ? "true" : "false";
+            var callScript = $"(async () => {{ if (!window.__winInstagram || typeof window.__winInstagram.likeMediaById !== 'function') {{ {WinInstagramScript} }} return await window.__winInstagram.likeMediaById({idJson}, {flag}); }})()";
+            var result = await _coreWebView2.ExecuteScriptAsync(callScript);
+            var ok = !string.IsNullOrWhiteSpace(result) && result.Trim().Equals("true", StringComparison.OrdinalIgnoreCase);
+            if (!ok) AppLogger.Warn("LIKE", $"Media {mediaId} {(shouldLike ? "like" : "unlike")} reported failure from Instagram.");
+            return ok;
+        }
+        catch (Exception ex)
+        {
+            AppLogger.Error("LIKE", $"Failed to set liked state for media {mediaId}", ex);
+            return false;
+        }
     }
+
+    /// <summary>
+    /// Sends a direct message by typing into the engine's composer. Returns false when the
+    /// composer is not present (for example the thread has not finished loading).
+    /// </summary>
+    public async Task<bool> SendDirectMessageAsync(string text)
+    {
+        if (_coreWebView2 == null || string.IsNullOrWhiteSpace(text)) return false;
+        try
+        {
+            var escaped = JsonSerializer.Serialize(text);
+            var callScript = $"(function() {{ if (!window.__winInstagram || typeof window.__winInstagram.sendDirectMessage !== 'function') {{ {WinInstagramScript} }} return window.__winInstagram.sendDirectMessage({escaped}); }})()";
+            var result = await _coreWebView2.ExecuteScriptAsync(callScript);
+            return !string.IsNullOrWhiteSpace(result) && result.Trim().Equals("true", StringComparison.OrdinalIgnoreCase);
+        }
+        catch (Exception ex)
+        {
+            AppLogger.Error("DM", "Failed to send direct message", ex);
+            return false;
+        }
+    }
+
+    /// <summary>Kept for compatibility; delegate likes must be addressed by media id.</summary>
+    public Task<bool> LikeMediaAsync(string mediaId) => SetMediaLikedAsync(mediaId, true);
 }

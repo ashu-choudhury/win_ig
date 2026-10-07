@@ -10,6 +10,8 @@ public class FeedPost : INotifyPropertyChanged
 
     public string Id { get; set; } = string.Empty;
     public string MediaCode { get; set; } = string.Empty;
+    /// <summary>Numeric media pk used by Instagram's like/unlike endpoint.</summary>
+    public string MediaPk { get; set; } = string.Empty;
     public string Username { get; set; } = "instagram_user";
     public string AvatarUrl { get; set; } = string.Empty;
     public string Caption { get; set; } = string.Empty;
@@ -28,6 +30,7 @@ public class FeedPost : INotifyPropertyChanged
                 _likesCount = value;
                 OnPropertyChanged();
                 OnPropertyChanged(nameof(FormattedLikes));
+                OnPropertyChanged(nameof(LikesText));
                 OnPropertyChanged(nameof(AccessibleDescription));
             }
         }
@@ -42,10 +45,19 @@ public class FeedPost : INotifyPropertyChanged
             {
                 _isLiked = value;
                 OnPropertyChanged();
+                OnPropertyChanged(nameof(LikeButtonText));
                 OnPropertyChanged(nameof(AccessibleDescription));
             }
         }
     }
+
+    public string LikeButtonText => IsLiked ? "❤️ Liked (L)" : "🤍 Like (L)";
+
+    public string LikesText =>
+        string.IsNullOrWhiteSpace(FormattedLikes) ? "No likes recorded" : $"❤️ {FormattedLikes} likes";
+
+    public string CommentsText =>
+        CommentsCount > 0 ? $"💬 {CommentsCount} comments" : "💬 No comments counted";
 
     public string FormattedLikes
     {

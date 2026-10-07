@@ -15,6 +15,8 @@ public partial class MainWindow : Window
     private string _currentTab = "";
     private ReelItem? _activeReel;
     private bool _isPlaying = true;
+    private bool _isMuted = false;
+    private bool _panelManuallyHidden = false;
     private readonly ObservableCollection<InstagramComment> _activeComments = new();
     private UpdateInfo? _pendingUpdate;
     private bool _isDownloadingUpdate = false;
@@ -54,6 +56,21 @@ public partial class MainWindow : Window
             });
         }
 
+        // Native accessible views. Every action they raise is executed here, so the shell stays
+        // the single owner of engine navigation and the single owner of anything spoken.
+        ViewHome.ViewModel.OpenInEngineRequested += NavigateToDeepLink;
+        ViewHome.RefreshRequested += ReloadHomeFeed;
+        ViewReels.PreviousRequested += () => _ = InstagramBridgeService.Instance.PreviousReelAsync();
+        ViewReels.NextRequested += () => _ = InstagramBridgeService.Instance.NextReelAsync();
+        ViewReels.PlayPauseRequested += () => _ = InstagramBridgeService.Instance.TogglePlayAsync();
+        ViewReels.MuteRequested += () => _ = InstagramBridgeService.Instance.ToggleMuteAsync();
+        ViewReels.LikeRequested += ToggleActiveReelLike;
+        ViewReels.ShareRequested += ShareActiveReel;
+        ViewReels.CommentsRequested += ToggleCommentsDrawer;
+        ViewReels.HistoryOpenRequested += NavigateToDeepLink;
+        ViewMessages.ViewModel.OpenThreadRequested += OpenDirectThread;
+        ViewMessages.SyncRequested += ReloadInbox;
+
         ViewLogin.LoginSucceeded += OnLoginSucceeded;
         InstagramBridgeService.Instance.LoginStatusChanged += OnLoginStatusChanged;
         InstagramBridgeService.Instance.CommentsReceived += OnCommentsReceived;
@@ -67,7 +84,9 @@ public partial class MainWindow : Window
             {
                 bool isNew = _activeReel == null || _activeReel.Id != reel.Id;
                 bool playStateChanged = _isPlaying != isPlaying;
+                bool muteStateChanged = _isMuted != isMuted;
                 _isPlaying = isPlaying;
+                _isMuted = isMuted;
 
                 if (isNew)
                 {
@@ -100,6 +119,10 @@ public partial class MainWindow : Window
                 else if (playStateChanged)
                 {
                     AccessibilityHelper.Announce(isPlaying ? "Playing" : "Paused");
+                }
+                else if (muteStateChanged)
+                {
+                    AccessibilityHelper.Announce(isMuted ? "Audio muted" : "Audio unmuted");
                 }
             });
         };
@@ -185,6 +208,8 @@ public partial class MainWindow : Window
         if (tag == "Engine")
         {
             ReelControlsPanel.Visibility = Visibility.Collapsed;
+            // Login and two-factor flows need the full window, so hand the whole area to the engine.
+            HideNativePanel();
             ViewLogin.SetAccessibleFocusable(true);
             AccessibilityHelper.Announce("Account and Login view.");
         }
@@ -197,35 +222,129 @@ public partial class MainWindow : Window
         {
             case "Home":
                 ReelControlsPanel.Visibility = Visibility.Collapsed;
-                AccessibilityHelper.Announce("Home Feed. Showing full-screen live Instagram home feed.");
+                ShowNativePanel("Home", "Home feed. Native post list on the right. Use Up and Down arrows to read posts, L to like, Enter to open in the web view, F6 to hide the panel.");
                 InstagramBridgeService.Instance.Navigate("https://www.instagram.com/");
                 break;
 
             case "Reels":
                 ReelControlsPanel.Visibility = Visibility.Visible;
+                ShowNativePanel("Reels", "Reels. The video plays in the web view on the left. The native panel on the right shows reel details and your watch history. Press F6 to hide the panel for full screen video.");
                 BtnNextReel.Focus();
-                AccessibilityHelper.Announce("Reels Player. Showing full-screen Instagram reels. Use Down Arrow or PageDown for next reel, Up Arrow or PageUp for previous, Space to play or pause, M to mute, L to like, C for comments.");
                 InstagramBridgeService.Instance.NavigateToReels();
                 break;
 
             case "Search":
                 ReelControlsPanel.Visibility = Visibility.Collapsed;
+                HideNativePanel();
                 OpenSearchBar();
                 break;
 
             case "Messages":
                 ReelControlsPanel.Visibility = Visibility.Collapsed;
                 CloseSearchBar();
-                AccessibilityHelper.Announce("Direct Messages. Showing full-screen live Instagram messages.");
+                ShowNativePanel("Messages", "Direct messages. Native conversation list on the right. Use Up and Down arrows to read conversations, Enter to open one, F6 to hide the panel.");
                 InstagramBridgeService.Instance.Navigate("https://www.instagram.com/direct/inbox/");
                 break;
 
             case "Settings":
                 ReelControlsPanel.Visibility = Visibility.Collapsed;
                 CloseSearchBar();
+                HideNativePanel();
                 OpenSettingsDialog();
                 break;
         }
+    }
+
+    /// <summary>
+    /// Shows the native panel for a tab, unless the user has hidden it or the comments drawer
+    /// currently occupies the same slot. Also marks exactly one view model active so a hidden
+    /// view never speaks.
+    /// </summary>
+    private void ShowNativePanel(string tag, string? announcement = null)
+    {
+        _panelManuallyHidden = false;
+
+        ViewHome.ViewModel.IsActive = tag == "Home";
+        ViewReels.ViewModel.IsActive = tag == "Reels";
+        ViewMessages.ViewModel.IsActive = tag == "Messages";
+
+        ViewHome.Visibility = tag == "Home" ? Visibility.Visible : Visibility.Collapsed;
+        ViewReels.Visibility = tag == "Reels" ? Visibility.Visible : Visibility.Collapsed;
+        ViewMessages.Visibility = tag == "Messages" ? Visibility.Visible : Visibility.Collapsed;
+
+        // The comments drawer shares this slot, so do not cover it.
+        if (CommentsDrawer.Visibility != Visibility.Visible)
+        {
+            NativePanelHost.Width = tag == "Reels" ? 430 : 520;
+            NativePanelHost.Visibility = Visibility.Visible;
+        }
+
+        if (!string.IsNullOrWhiteSpace(announcement))
+        {
+            AccessibilityHelper.Announce(announcement);
+        }
+    }
+
+    /// <summary>Hides the native panel and stops its view model from speaking.</summary>
+    private void HideNativePanel()
+    {
+        NativePanelHost.Visibility = Visibility.Collapsed;
+        ViewHome.ViewModel.IsActive = false;
+        ViewReels.ViewModel.IsActive = false;
+        ViewMessages.ViewModel.IsActive = false;
+    }
+
+    /// <summary>F6: hide the panel for a full width web view, or bring it back.</summary>
+    private void ToggleNativePanel()
+    {
+        var panelTab = _currentTab is "Home" or "Reels" or "Messages";
+        if (!panelTab)
+        {
+            AccessibilityHelper.Announce("The native panel is available on the Home, Reels and Messages tabs.");
+            return;
+        }
+
+        if (NativePanelHost.Visibility == Visibility.Visible)
+        {
+            _panelManuallyHidden = true;
+            HideNativePanel();
+            AccessibilityHelper.Announce("Native panel hidden. The web view is now full width. Press F6 to show the panel again.");
+        }
+        else
+        {
+            ShowNativePanel(_currentTab);
+            AccessibilityHelper.Announce("Native panel shown.");
+            PlaceFocusInPanel(_currentTab);
+        }
+    }
+
+    private void PlaceFocusInPanel(string tag)
+    {
+        switch (tag)
+        {
+            case "Home": ViewHome.FocusPosts(); break;
+            case "Messages": ViewMessages.FocusConversations(); break;
+        }
+    }
+
+    /// <summary>
+    /// True when keyboard focus sits inside the native panel. Arrow keys then belong to the
+    /// list being read rather than to reel scrolling, which is what a keyboard user expects.
+    /// </summary>
+    private bool IsFocusInNativePanel()
+    {
+        DependencyObject? element = Keyboard.FocusedElement as DependencyObject;
+        while (element != null)
+        {
+            if (ReferenceEquals(element, NativePanelHost)) return true;
+            element = element switch
+            {
+                Visual => VisualTreeHelper.GetParent(element),
+                FrameworkContentElement fce => fce.Parent,
+                _ => null
+            };
+        }
+        return false;
     }
 
     private void OpenSearchBar()
@@ -509,6 +628,8 @@ public partial class MainWindow : Window
     private void OpenCommentsDrawer()
     {
         CommentsDrawer.Visibility = Visibility.Visible;
+        // The drawer takes over the right-hand slot normally used by the native panel.
+        NativePanelHost.Visibility = Visibility.Collapsed;
         TxtCommentsHeader.Text = _activeReel != null && !string.IsNullOrWhiteSpace(_activeReel.Username)
             ? $"💬 Comments (@{_activeReel.Username})"
             : "💬 Comments";
@@ -524,6 +645,13 @@ public partial class MainWindow : Window
     {
         CommentsDrawer.Visibility = Visibility.Collapsed;
         _ = InstagramBridgeService.Instance.CloseCommentsAsync();
+
+        // Hand the slot back to the native panel unless the user hid it deliberately.
+        if (!_panelManuallyHidden && _currentTab is "Home" or "Reels" or "Messages")
+        {
+            NativePanelHost.Visibility = Visibility.Visible;
+        }
+
         BtnCommentsReel.Focus();
         AccessibilityHelper.Announce("Comments closed. Returned to reel playback.");
     }
@@ -637,6 +765,14 @@ public partial class MainWindow : Window
             }
         }
 
+        // 0.2. F6 shows or hides the native accessible panel
+        if (e.Key == Key.F6)
+        {
+            ToggleNativePanel();
+            e.Handled = true;
+            return;
+        }
+
         // 0.4. If search bar is visible, Escape key closes it
         if (SearchBarPanel.Visibility == Visibility.Visible && e.Key == Key.Escape)
         {
@@ -721,16 +857,27 @@ public partial class MainWindow : Window
         {
             switch (e.Key)
             {
+                case Key.J:
+                    _ = InstagramBridgeService.Instance.NextReelAsync();
+                    e.Handled = true;
+                    break;
+
+                case Key.K:
+                    _ = InstagramBridgeService.Instance.PreviousReelAsync();
+                    e.Handled = true;
+                    break;
+
+                // Arrow keys belong to the list focused inside the native panel, if any.
                 case Key.PageDown:
                 case Key.Down:
-                case Key.J:
+                    if (IsFocusInNativePanel()) return;
                     _ = InstagramBridgeService.Instance.NextReelAsync();
                     e.Handled = true;
                     break;
 
                 case Key.PageUp:
                 case Key.Up:
-                case Key.K:
+                    if (IsFocusInNativePanel()) return;
                     _ = InstagramBridgeService.Instance.PreviousReelAsync();
                     e.Handled = true;
                     break;
@@ -761,6 +908,34 @@ public partial class MainWindow : Window
                     break;
             }
         }
+    }
+
+    private void BtnTogglePanel_Click(object sender, RoutedEventArgs e) => ToggleNativePanel();
+
+    private void ReloadHomeFeed()
+    {
+        ViewHome.ViewModel.Status = "Refreshing your timeline...";
+        InstagramBridgeService.Instance.Navigate("https://www.instagram.com/");
+        AccessibilityHelper.Announce("Refreshing your timeline.");
+    }
+
+    private void ReloadInbox()
+    {
+        ViewMessages.ViewModel.Status = "Reloading your inbox...";
+        InstagramBridgeService.Instance.Navigate("https://www.instagram.com/direct/inbox/");
+        AccessibilityHelper.Announce("Reloading your inbox.");
+    }
+
+    /// <summary>Opens a DM thread in the engine; the parsed messages arrive asynchronously.</summary>
+    private void OpenDirectThread(string threadId)
+    {
+        if (string.IsNullOrWhiteSpace(threadId))
+        {
+            AccessibilityHelper.Announce("That conversation has no thread id, so it cannot be opened in the web view.");
+            return;
+        }
+
+        InstagramBridgeService.Instance.Navigate($"https://www.instagram.com/direct/t/{threadId}/");
     }
 
     private void BtnCheckUpdate_Click(object sender, RoutedEventArgs e) => CheckForUpdatesManual();

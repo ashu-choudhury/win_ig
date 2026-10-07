@@ -79,10 +79,15 @@ jobs:
             ---
 
             ### ⌨️ Quick Keyboard Reference
-            - **Ctrl + 1**: Home Feed
+            - **Ctrl + 1**: Home Feed (native panel)
             - **Ctrl + 2**: Reels Player
-            - **Ctrl + 3**: Direct Messages
+            - **Ctrl + 3**: Search / Open Link
+            - **Ctrl + 4**: Direct Messages (native panel)
+            - **Ctrl + 5**: Settings
             - **Ctrl + L**: Account / Login & Web Engine
+            - **F6**: Show or hide the native accessible panel
+            - **Up / Down** *(in a panel)*: Read posts, conversations or watched reels
+            - **Enter** *(in a panel)*: Open the selected post, reel or conversation
             - **PageDown / Down / J**: Next Reel (speaks creator, caption, likes)
             - **PageUp / Up / K**: Previous Reel
             - **Space**: Play / Pause

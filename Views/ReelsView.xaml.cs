@@ -6,9 +6,26 @@ using WinInstagram.ViewModels;
 
 namespace WinInstagram.Views;
 
+/// <summary>
+/// Native accessible Reels panel. It shows live details of the reel playing in the engine and
+/// a navigable list of reels already watched, but it intentionally owns no playback logic:
+/// every action is raised as an event so the shell remains the single place that drives the
+/// engine and the single place that speaks.
+/// </summary>
 public partial class ReelsView : UserControl
 {
     public ReelsViewModel ViewModel => (ReelsViewModel)DataContext;
+
+    public event Action? PreviousRequested;
+    public event Action? NextRequested;
+    public event Action? PlayPauseRequested;
+    public event Action? MuteRequested;
+    public event Action? LikeRequested;
+    public event Action? ShareRequested;
+    public event Action? CommentsRequested;
+
+    /// <summary>Raised with a URL when the user re-opens a reel from their history.</summary>
+    public event Action<string>? HistoryOpenRequested;
 
     public ReelsView()
     {
@@ -16,141 +33,45 @@ public partial class ReelsView : UserControl
         DataContext = new ReelsViewModel();
     }
 
-    private void UserControl_Loaded(object sender, RoutedEventArgs e)
-    {
-        Focus();
-        _ = InstagramBridgeService.Instance.SyncActiveReelAsync();
-    }
-
     private void UserControl_KeyDown(object sender, KeyEventArgs e)
     {
-        // Do not intercept hotkeys if user is currently typing a comment
-        if (TxtNewComment.IsFocused)
-        {
-            if (e.Key == Key.Escape)
-            {
-                ViewModel.IsCommentsOpen = false;
-                Focus();
-                e.Handled = true;
-            }
-            return;
-        }
-
         switch (e.Key)
         {
-            case Key.PageDown:
-            case Key.Down:
-            case Key.J:
-                ViewModel.MoveNext();
-                e.Handled = true;
-                break;
-
-            case Key.PageUp:
-            case Key.Up:
-            case Key.K:
-                ViewModel.MovePrevious();
-                e.Handled = true;
-                break;
-
-            case Key.Space:
-                ViewModel.TogglePlay();
-                e.Handled = true;
-                break;
-
-            case Key.M:
-                ViewModel.ToggleMute();
-                e.Handled = true;
-                break;
-
-            case Key.L:
-                ViewModel.ToggleLike();
-                e.Handled = true;
-                break;
-
-            case Key.S:
-                ShareReel();
-                e.Handled = true;
-                break;
-
-            case Key.C:
-                ViewModel.ToggleComments();
-                e.Handled = true;
-                break;
-
             case Key.OemPlus:
             case Key.Add:
-                ViewModel.Volume += 0.1;
+                ViewModel.IncreaseVolume();
                 e.Handled = true;
                 break;
 
             case Key.OemMinus:
             case Key.Subtract:
-                ViewModel.Volume -= 0.1;
+                ViewModel.DecreaseVolume();
                 e.Handled = true;
                 break;
 
-            case Key.Escape:
-                if (ViewModel.IsCommentsOpen)
-                {
-                    ViewModel.IsCommentsOpen = false;
-                    e.Handled = true;
-                }
+            case Key.Enter:
+                OpenSelectedHistoryReel();
+                e.Handled = true;
                 break;
         }
     }
 
-    private void PrevBtn_Click(object sender, RoutedEventArgs e) => ViewModel.MovePrevious();
-    private void NextBtn_Click(object sender, RoutedEventArgs e) => ViewModel.MoveNext();
-    private void PlayPauseBtn_Click(object sender, RoutedEventArgs e) => ViewModel.TogglePlay();
-    private void MuteBtn_Click(object sender, RoutedEventArgs e) => ViewModel.ToggleMute();
-    private void BtnLike_Click(object sender, RoutedEventArgs e) => ViewModel.ToggleLike();
-    private void BtnComments_Click(object sender, RoutedEventArgs e) => ViewModel.ToggleComments();
-    private void BtnShare_Click(object sender, RoutedEventArgs e) => ShareReel();
-    private void CloseComments_Click(object sender, RoutedEventArgs e) => ViewModel.IsCommentsOpen = false;
-
-    private void ShareReel()
+    private void OpenSelectedHistoryReel()
     {
-        var reel = ViewModel.CurrentReel;
-        if (reel == null)
+        var url = ViewModel.GetSelectedHistoryUrl();
+        if (string.IsNullOrWhiteSpace(url))
         {
-            AccessibilityHelper.Announce("No active reel to share.");
+            AccessibilityHelper.Announce("No previously watched reel is selected.");
             return;
         }
-
-        string shareUrl = !string.IsNullOrWhiteSpace(reel.Id) && reel.Id.StartsWith("http", StringComparison.OrdinalIgnoreCase)
-            ? reel.Id
-            : "https://www.instagram.com/reels/";
-
-        shareUrl = DeepLinkService.NormalizeInstagramUrl(shareUrl);
-        if (string.IsNullOrWhiteSpace(shareUrl))
-        {
-            shareUrl = "https://www.instagram.com/reels/";
-        }
-
-        try
-        {
-            Clipboard.SetText(shareUrl);
-            AccessibilityHelper.Announce($"Reel link copied to clipboard: {shareUrl}");
-        }
-        catch (Exception ex)
-        {
-            AppLogger.Error("SHARE", "Failed to copy reel link", ex);
-            AccessibilityHelper.Announce("Failed to copy link to clipboard.");
-        }
+        HistoryOpenRequested?.Invoke(url);
     }
 
-    private void PostComment_Click(object sender, RoutedEventArgs e)
-    {
-        if (!string.IsNullOrWhiteSpace(TxtNewComment.Text) && ViewModel.CurrentReel != null)
-        {
-            ViewModel.CurrentReel.Comments.Add(new Models.InstagramComment
-            {
-                Username = "You",
-                Text = TxtNewComment.Text,
-                CreatedAt = "Just now"
-            });
-            TxtNewComment.Text = "";
-            AccessibilityHelper.Announce("Comment posted successfully.");
-        }
-    }
+    private void Prev_Click(object sender, RoutedEventArgs e) => PreviousRequested?.Invoke();
+    private void Next_Click(object sender, RoutedEventArgs e) => NextRequested?.Invoke();
+    private void PlayPause_Click(object sender, RoutedEventArgs e) => PlayPauseRequested?.Invoke();
+    private void Mute_Click(object sender, RoutedEventArgs e) => MuteRequested?.Invoke();
+    private void Like_Click(object sender, RoutedEventArgs e) => LikeRequested?.Invoke();
+    private void Share_Click(object sender, RoutedEventArgs e) => ShareRequested?.Invoke();
+    private void Comments_Click(object sender, RoutedEventArgs e) => CommentsRequested?.Invoke();
 }

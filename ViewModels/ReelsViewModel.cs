@@ -6,48 +6,94 @@ using WinInstagram.Services;
 
 namespace WinInstagram.ViewModels;
 
+/// <summary>
+/// Backs the native Reels panel: live details of the reel currently playing in the engine,
+/// plus a navigable history of reels you have already watched. Playback actions themselves
+/// are owned by the shell so there is exactly one place that talks to the engine and one
+/// place that speaks to the user.
+/// </summary>
 public class ReelsViewModel : INotifyPropertyChanged
 {
+    private const int MaxHistory = 100;
+
     private ReelItem? _currentReel;
-    private bool _isMuted = false;
-    private double _volume = 1.0;
+    private ReelItem? _selectedHistoryReel;
+    private bool _isMuted;
     private bool _isPlaying = true;
-    private bool _isCommentsOpen = false;
-    private string _statusMessage = "Ready. Press Down Arrow or J for next reel.";
-    private string _lastAnnouncedReelId = string.Empty;
+    private double _volume = 1.0;
+    private bool _isActive;
+    private string _statusMessage = "Ready. Press Down Arrow or J for the next reel.";
+
+    /// <summary>Reels seen this session, most recently watched first.</summary>
+    public ObservableCollection<ReelItem> ViewedReels { get; } = new();
+
+    public bool IsActive
+    {
+        get => _isActive;
+        set { if (_isActive != value) { _isActive = value; OnPropertyChanged(); } }
+    }
 
     public ReelItem? CurrentReel
     {
         get => _currentReel;
         set
         {
-            if (_currentReel != value)
-            {
-                _currentReel = value;
-                OnPropertyChanged();
-                OnPropertyChanged(nameof(HasCurrentReel));
-            }
+            if (_currentReel == value) return;
+            _currentReel = value;
+            OnPropertyChanged();
+            OnPropertyChanged(nameof(HasCurrentReel));
+            OnPropertyChanged(nameof(CurrentReelLikesText));
+            OnPropertyChanged(nameof(CurrentReelCommentsText));
+            OnPropertyChanged(nameof(CurrentReelCaption));
         }
     }
 
     public bool HasCurrentReel => _currentReel != null;
+
+    /// <summary>
+    /// The history entry the user has arrowed to. Its full description is exposed as the list
+    /// item's accessible name, so UI Automation speaks it and no live region is needed here.
+    /// </summary>
+    public ReelItem? SelectedHistoryReel
+    {
+        get => _selectedHistoryReel;
+        set
+        {
+            if (_selectedHistoryReel == value) return;
+            _selectedHistoryReel = value;
+            OnPropertyChanged();
+        }
+    }
 
     public bool IsMuted
     {
         get => _isMuted;
         set
         {
-            if (_isMuted != value)
-            {
-                _isMuted = value;
-                OnPropertyChanged();
-                OnPropertyChanged(nameof(MuteButtonText));
-                AccessibilityHelper.Announce(_isMuted ? "Audio muted" : "Audio unmuted");
-            }
+            if (_isMuted == value) return;
+            _isMuted = value;
+            OnPropertyChanged();
+            OnPropertyChanged(nameof(MuteButtonText));
         }
     }
 
-    public string MuteButtonText => IsMuted ? "Unmute (M)" : "Mute (M)";
+    public string MuteButtonText => IsMuted ? "🔇 Unmute (M)" : "🔊 Mute (M)";
+
+    public bool IsPlaying
+    {
+        get => _isPlaying;
+        set
+        {
+            if (_isPlaying == value) return;
+            _isPlaying = value;
+            OnPropertyChanged();
+            OnPropertyChanged(nameof(PlayButtonText));
+            OnPropertyChanged(nameof(PlaybackStatusText));
+        }
+    }
+
+    public string PlayButtonText => IsPlaying ? "⏸ Pause (Space)" : "▶ Play (Space)";
+    public string PlaybackStatusText => IsPlaying ? "▶ Playing" : "⏸ Paused";
 
     public double Volume
     {
@@ -55,62 +101,33 @@ public class ReelsViewModel : INotifyPropertyChanged
         set
         {
             var clamped = Math.Clamp(value, 0.0, 1.0);
-            if (Math.Abs(_volume - clamped) > 0.01)
-            {
-                _volume = clamped;
-                OnPropertyChanged();
-                AccessibilityHelper.Announce($"Volume {(int)(_volume * 100)} percent");
-                _ = InstagramBridgeService.Instance.SetVolumeAsync(_volume);
-            }
+            if (Math.Abs(_volume - clamped) < 0.01) return;
+            _volume = clamped;
+            OnPropertyChanged();
+            OnPropertyChanged(nameof(VolumeText));
+            _ = InstagramBridgeService.Instance.SetVolumeAsync(_volume);
+            if (_isActive) AccessibilityHelper.Announce($"Volume {(int)(_volume * 100)} percent");
         }
     }
 
-    public bool IsPlaying
-    {
-        get => _isPlaying;
-        set
-        {
-            if (_isPlaying != value)
-            {
-                _isPlaying = value;
-                OnPropertyChanged();
-                OnPropertyChanged(nameof(PlayButtonText));
-                OnPropertyChanged(nameof(PlayButtonAutomationText));
-                OnPropertyChanged(nameof(PlaybackStatusText));
-                AccessibilityHelper.Announce(_isPlaying ? "Playing" : "Paused");
-            }
-        }
-    }
+    public string VolumeText => $"Volume: {(int)(_volume * 100)}%";
 
-    public string PlayButtonText => IsPlaying ? "Pause (Space)" : "Play (Space)";
-    public string PlayButtonAutomationText => IsPlaying ? "Pause reel. Press Spacebar." : "Play reel. Press Spacebar.";
-    public string PlaybackStatusText => IsPlaying ? "▶ Playing in Web Engine" : "⏸ Paused";
+    public string CurrentReelLikesText =>
+        CurrentReel == null ? string.Empty
+        : string.IsNullOrWhiteSpace(CurrentReel.FormattedLikes) ? "Likes unavailable" : $"{CurrentReel.FormattedLikes} likes";
 
-    public bool IsCommentsOpen
-    {
-        get => _isCommentsOpen;
-        set
-        {
-            if (_isCommentsOpen != value)
-            {
-                _isCommentsOpen = value;
-                OnPropertyChanged();
-                AccessibilityHelper.Announce(_isCommentsOpen ? "Comments panel opened" : "Comments panel closed");
-            }
-        }
-    }
+    public string CurrentReelCommentsText =>
+        CurrentReel == null ? string.Empty
+        : CurrentReel.CommentsCount > 0 ? $"{CurrentReel.CommentsCount} comments" : "No comments counted";
+
+    public string CurrentReelCaption =>
+        CurrentReel == null ? "No reel playing yet."
+        : string.IsNullOrWhiteSpace(CurrentReel.Caption) ? "This reel has no caption." : CurrentReel.Caption;
 
     public string StatusMessage
     {
         get => _statusMessage;
-        set
-        {
-            if (_statusMessage != value)
-            {
-                _statusMessage = value;
-                OnPropertyChanged();
-            }
-        }
+        set { if (_statusMessage != value) { _statusMessage = value; OnPropertyChanged(); } }
     }
 
     public ReelsViewModel()
@@ -121,79 +138,42 @@ public class ReelsViewModel : INotifyPropertyChanged
 
     private void OnActiveReelChanged(ReelItem reel, bool isPlaying, bool isMuted, double vol)
     {
-        bool isNew = CurrentReel == null || CurrentReel.Username != reel.Username || CurrentReel.Caption != reel.Caption;
-        bool playChanged = _isPlaying != isPlaying;
+        var isNew = CurrentReel == null || CurrentReel.Id != reel.Id;
 
         CurrentReel = reel;
-        _isPlaying = isPlaying;
-        _isMuted = isMuted;
+        IsPlaying = isPlaying;
+        IsMuted = isMuted;
         _volume = vol;
-
-        OnPropertyChanged(nameof(IsPlaying));
-        OnPropertyChanged(nameof(PlayButtonText));
-        OnPropertyChanged(nameof(PlayButtonAutomationText));
-        OnPropertyChanged(nameof(PlaybackStatusText));
-        OnPropertyChanged(nameof(IsMuted));
-        OnPropertyChanged(nameof(MuteButtonText));
         OnPropertyChanged(nameof(Volume));
-
-        StatusMessage = isPlaying ? $"Playing reel by @{reel.Username}" : $"Paused reel by @{reel.Username}";
+        OnPropertyChanged(nameof(VolumeText));
 
         if (isNew)
         {
-            _lastAnnouncedReelId = reel.Id;
-            AccessibilityHelper.Announce(reel.AccessibleDescription);
+            // Keep one entry per reel, newest first, so re-reading does not repeat.
+            var existing = ViewedReels.FirstOrDefault(r => r.Id == reel.Id);
+            if (existing != null) ViewedReels.Remove(existing);
+            ViewedReels.Insert(0, reel);
+            while (ViewedReels.Count > MaxHistory) ViewedReels.RemoveAt(ViewedReels.Count - 1);
+
+            StatusMessage = $"Reel by @{reel.Username}";
         }
-        else if (playChanged)
+        else
         {
-            AccessibilityHelper.Announce(isPlaying ? "Playing" : "Paused");
+            StatusMessage = isPlaying ? $"Playing reel by @{reel.Username}" : $"Paused reel by @{reel.Username}";
         }
     }
 
-    public void MoveNext()
-    {
-        StatusMessage = "Scrolling down to next reel in Instagram Web...";
-        _ = InstagramBridgeService.Instance.NextReelAsync();
-    }
+    public void IncreaseVolume() => Volume += 0.1;
+    public void DecreaseVolume() => Volume -= 0.1;
 
-    public void MovePrevious()
+    /// <summary>Re-opens the history entry the user is focused on.</summary>
+    public string? GetSelectedHistoryUrl()
     {
-        StatusMessage = "Scrolling up to previous reel in Instagram Web...";
-        _ = InstagramBridgeService.Instance.PreviousReelAsync();
-    }
-
-    public void TogglePlay()
-    {
-        _ = InstagramBridgeService.Instance.TogglePlayAsync();
-    }
-
-    public void ToggleMute()
-    {
-        _ = InstagramBridgeService.Instance.ToggleMuteAsync();
-    }
-
-    public void ToggleLike()
-    {
-        if (CurrentReel != null)
-        {
-            CurrentReel.IsLiked = !CurrentReel.IsLiked;
-            if (CurrentReel.IsLiked)
-            {
-                CurrentReel.LikesCount++;
-            }
-            else if (CurrentReel.LikesCount > 0)
-            {
-                CurrentReel.LikesCount--;
-            }
-            AccessibilityHelper.Announce(CurrentReel.IsLiked ? "Liked reel" : "Unliked reel");
-        }
-        _ = InstagramBridgeService.Instance.ToggleLikeAsync();
-    }
-
-    public void ToggleComments()
-    {
-        IsCommentsOpen = !IsCommentsOpen;
-        _ = InstagramBridgeService.Instance.ToggleCommentsAsync();
+        var reel = SelectedHistoryReel;
+        if (reel == null || string.IsNullOrWhiteSpace(reel.Id)) return null;
+        return reel.Id.StartsWith("http", StringComparison.OrdinalIgnoreCase)
+            ? reel.Id
+            : $"https://www.instagram.com/reels/";
     }
 
     public event PropertyChangedEventHandler? PropertyChanged;
